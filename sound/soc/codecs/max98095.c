@@ -1860,7 +1860,7 @@ static int max98095_put_eq_enum(struct snd_kcontrol *kcontrol,
 	struct max98095_pdata *pdata = max98095->pdata;
 	int channel = max98095_get_eq_channel(kcontrol->id.name);
 	struct max98095_cdata *cdata;
-	int sel = ucontrol->value.integer.value[0];
+	unsigned int sel = ucontrol->value.integer.value[0];
 	struct max98095_eq_cfg *coef_set;
 	int fs, best, best_val, i;
 	int regmask, regsave;
@@ -2013,7 +2013,7 @@ static int max98095_put_bq_enum(struct snd_kcontrol *kcontrol,
 	struct max98095_pdata *pdata = max98095->pdata;
 	int channel = max98095_get_bq_channel(codec, kcontrol->id.name);
 	struct max98095_cdata *cdata;
-	int sel = ucontrol->value.integer.value[0];
+	unsigned int sel = ucontrol->value.integer.value[0];
 	struct max98095_biquad_cfg *coef_set;
 	int fs, best, best_val, i;
 	int regmask, regsave;
@@ -2236,11 +2236,7 @@ static int max98095_probe(struct snd_soc_codec *codec)
 	}
 
 	/* reset the codec, the DSP core, and disable all interrupts */
-	ret = max98095_reset(codec);
-	if (ret != 0) {
-		dev_err(codec->dev, "Failed to reset: %d\n", ret);
-		return ret;
-	}
+	max98095_reset(codec);
 
 	/* initialize private data */
 

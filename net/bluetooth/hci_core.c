@@ -40,7 +40,6 @@
 #include <linux/skbuff.h>
 #include <linux/workqueue.h>
 #include <linux/interrupt.h>
-#include <linux/notifier.h>
 #include <linux/rfkill.h>
 #include <linux/timer.h>
 #include <linux/crypto.h>
@@ -66,25 +65,10 @@ DEFINE_RWLOCK(hci_dev_list_lock);
 LIST_HEAD(hci_cb_list);
 DEFINE_RWLOCK(hci_cb_list_lock);
 
-/* HCI notifiers list */
-static ATOMIC_NOTIFIER_HEAD(hci_notifier);
 /* ---- HCI notifications ---- */
-
-int hci_register_notifier(struct notifier_block *nb)
-{
-	return atomic_notifier_chain_register(&hci_notifier, nb);
-}
-EXPORT_SYMBOL(hci_register_notifier);
-
-int hci_unregister_notifier(struct notifier_block *nb)
-{
-	return atomic_notifier_chain_unregister(&hci_notifier, nb);
-}
-EXPORT_SYMBOL(hci_unregister_notifier);
 
 static void hci_notify(struct hci_dev *hdev, int event)
 {
-	atomic_notifier_call_chain(&hci_notifier, event, hdev);
 	hci_sock_dev_event(hdev, event);
 }
 
@@ -766,6 +750,8 @@ static int hci_dev_do_close(struct hci_dev *hdev)
 
 	cancel_work_sync(&hdev->le_scan);
 
+	cancel_delayed_work(&hdev->power_off);
+
 	hci_req_cancel(hdev, ENODEV);
 	hci_req_lock(hdev);
 
@@ -1134,11 +1120,15 @@ EXPORT_SYMBOL(hci_free_dev);
 static void hci_power_on(struct work_struct *work)
 {
 	struct hci_dev *hdev = container_of(work, struct hci_dev, power_on);
+	int err;
 
 	BT_DBG("%s", hdev->name);
 
-	if (hci_dev_open(hdev->id) < 0)
+	err = hci_dev_open(hdev->id);
+	if (err < 0) {
+		mgmt_set_powered_failed(hdev, err);
 		return;
+	}
 
 	if (test_bit(HCI_AUTO_OFF, &hdev->dev_flags))
 		schedule_delayed_work(&hdev->power_off,
@@ -1880,6 +1870,8 @@ void hci_unregister_dev(struct hci_dev *hdev)
 	for (i = 0; i < NUM_REASSEMBLY; i++)
 		kfree_skb(hdev->reassembly[i]);
 
+	cancel_work_sync(&hdev->power_on);
+
 	if (!test_bit(HCI_INIT, &hdev->flags) &&
 				!test_bit(HCI_SETUP, &hdev->dev_flags)) {
 		hci_dev_lock(hdev);
@@ -2171,9 +2163,6 @@ static int hci_send_frame(struct sk_buff *skb)
 	/* Get rid of skb owner, prior to sending to the driver. */
 	skb_orphan(skb);
 
-	/* Notify the registered devices about a new send */
-	hci_notify(hdev, HCI_DEV_WRITE);
-
 	return hdev->send(skb);
 }
 
@@ -2185,11 +2174,6 @@ int hci_send_cmd(struct hci_dev *hdev, __u16 opcode, __u32 plen, void *param)
 	struct sk_buff *skb;
 
 	BT_DBG("%s opcode 0x%x plen %d", hdev->name, opcode, plen);
-
-	if (!hdev->workqueue) {
-		WARN_ON("hci_send_cmd: workqueue not initialised");
-		return -ENOMEM;
-	}
 
 	skb = bt_skb_alloc(len, GFP_ATOMIC);
 	if (!skb) {

@@ -16,7 +16,30 @@
 
 static struct cpuidle_driver *cpuidle_curr_driver;
 DEFINE_SPINLOCK(cpuidle_driver_lock);
-int cpuidle_driver_refcount;
+
+static void __cpuidle_register_driver(struct cpuidle_driver *drv)
+{
+	int i;
+	/*
+	 * cpuidle driver should set the drv->power_specified bit
+	 * before registering if the driver provides
+	 * power_usage numbers.
+	 *
+	 * If power_specified is not set,
+	 * we fill in power_usage with decreasing values as the
+	 * cpuidle code has an implicit assumption that state Cn
+	 * uses less power than C(n-1).
+	 *
+	 * With CONFIG_ARCH_HAS_CPU_RELAX, C0 is already assigned
+	 * an power value of -1.  So we use -2, -3, etc, for other
+	 * c-states.
+	 */
+	if (!drv->power_specified) {
+		for (i = CPUIDLE_DRIVER_STATE_START; i < drv->state_count; i++)
+			drv->states[i].power_usage = -1 - i;
+	}
+}
+
 
 /**
  * cpuidle_register_driver - registers a driver
@@ -24,7 +47,7 @@ int cpuidle_driver_refcount;
  */
 int cpuidle_register_driver(struct cpuidle_driver *drv)
 {
-	if (!drv)
+	if (!drv || !drv->state_count)
 		return -EINVAL;
 
 	if (cpuidle_disabled())
@@ -35,6 +58,7 @@ int cpuidle_register_driver(struct cpuidle_driver *drv)
 		spin_unlock(&cpuidle_driver_lock);
 		return -EBUSY;
 	}
+	__cpuidle_register_driver(drv);
 	cpuidle_curr_driver = drv;
 	spin_unlock(&cpuidle_driver_lock);
 
@@ -65,34 +89,8 @@ void cpuidle_unregister_driver(struct cpuidle_driver *drv)
 	}
 
 	spin_lock(&cpuidle_driver_lock);
-
-	if (!WARN_ON(cpuidle_driver_refcount > 0))
-		cpuidle_curr_driver = NULL;
-
+	cpuidle_curr_driver = NULL;
 	spin_unlock(&cpuidle_driver_lock);
 }
 
 EXPORT_SYMBOL_GPL(cpuidle_unregister_driver);
-
-struct cpuidle_driver *cpuidle_driver_ref(void)
-{
-	struct cpuidle_driver *drv;
-
-	spin_lock(&cpuidle_driver_lock);
-
-	drv = cpuidle_curr_driver;
-	cpuidle_driver_refcount++;
-
-	spin_unlock(&cpuidle_driver_lock);
-	return drv;
-}
-
-void cpuidle_driver_unref(void)
-{
-	spin_lock(&cpuidle_driver_lock);
-
-	if (!WARN_ON(cpuidle_driver_refcount <= 0))
-		cpuidle_driver_refcount--;
-
-	spin_unlock(&cpuidle_driver_lock);
-}

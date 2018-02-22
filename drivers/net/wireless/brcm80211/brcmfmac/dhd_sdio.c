@@ -313,14 +313,6 @@ struct rte_console {
 #define BRCMF_SDIO_NV_NAME	"brcm/brcmfmac-sdio.txt"
 MODULE_FIRMWARE(BRCMF_SDIO_FW_NAME);
 MODULE_FIRMWARE(BRCMF_SDIO_NV_NAME);
-#define BRCMF_SDIO_4329_FW_NAME	"brcm/brcmfmac-sdio-4329.bin"
-#define BRCMF_SDIO_4330_FW_NAME	"brcm/brcmfmac-sdio-4330.bin"
-#define BRCMF_SDIO_4329_NV_NAME	"brcm/brcmfmac-sdio-4329.txt"
-#define BRCMF_SDIO_4330_NV_NAME	"brcm/brcmfmac-sdio-4330.txt"
-MODULE_FIRMWARE(BRCMF_SDIO_4329_FW_NAME);
-MODULE_FIRMWARE(BRCMF_SDIO_4330_FW_NAME);
-MODULE_FIRMWARE(BRCMF_SDIO_4329_NV_NAME);
-MODULE_FIRMWARE(BRCMF_SDIO_4330_NV_NAME);
 
 #define BRCMF_IDLE_IMMEDIATE	(-1)	/* Enter idle immediately */
 #define BRCMF_IDLE_ACTIVE	0	/* Do not request any SD clock change
@@ -2360,24 +2352,6 @@ static void brcmf_sdbrcm_bus_stop(struct device *dev)
 	up(&bus->sdsem);
 }
 
-#ifdef CONFIG_BRCMFMAC_SDIO_OOB
-static inline void brcmf_sdbrcm_clrintr(struct brcmf_sdio *bus)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&bus->sdiodev->irq_en_lock, flags);
-	if (!bus->sdiodev->irq_en && !bus->ipend) {
-		enable_irq(bus->sdiodev->irq);
-		bus->sdiodev->irq_en = true;
-	}
-	spin_unlock_irqrestore(&bus->sdiodev->irq_en_lock, flags);
-}
-#else
-static inline void brcmf_sdbrcm_clrintr(struct brcmf_sdio *bus)
-{
-}
-#endif		/* CONFIG_BRCMFMAC_SDIO_OOB */
-
 static bool brcmf_sdbrcm_dpc(struct brcmf_sdio *bus)
 {
 	u32 intstatus, newstatus = 0;
@@ -2535,8 +2509,6 @@ static bool brcmf_sdbrcm_dpc(struct brcmf_sdio *bus)
 	bus->intstatus = intstatus;
 
 clkwait:
-	brcmf_sdbrcm_clrintr(bus);
-
 	if (data_ok(bus) && bus->ctrl_frame_stat &&
 		(bus->clkstate == CLK_AVAIL)) {
 		int ret, i;
@@ -3258,21 +3230,12 @@ static int brcmf_sdbrcm_download_code_file(struct brcmf_sdio *bus)
 	int offset = 0;
 	uint len;
 	u8 *memblock = NULL, *memptr;
-	int ret = -1;
-	u16 chipid = (u16) bus->ci->chip;
+	int ret;
 
 	brcmf_dbg(INFO, "Enter\n");
 
-	if (chipid == BCM4329_CHIP_ID)
-		ret = request_firmware(&bus->firmware, BRCMF_SDIO_4329_FW_NAME,
+	ret = request_firmware(&bus->firmware, BRCMF_SDIO_FW_NAME,
 			       &bus->sdiodev->func[2]->dev);
-	else if (chipid == BCM4330_CHIP_ID)
-		ret = request_firmware(&bus->firmware, BRCMF_SDIO_4330_FW_NAME,
-			       &bus->sdiodev->func[2]->dev);
-	else
-		ret = request_firmware(&bus->firmware, BRCMF_SDIO_FW_NAME,
-			       &bus->sdiodev->func[2]->dev);
-
 	if (ret) {
 		brcmf_dbg(ERROR, "Fail to request firmware %d\n", ret);
 		return ret;
@@ -3366,21 +3329,10 @@ static int brcmf_sdbrcm_download_nvram(struct brcmf_sdio *bus)
 	uint len;
 	char *memblock = NULL;
 	char *bufp;
-	int ret = -1;
-	u16 chipid = (u16) bus->ci->chip;
+	int ret;
 
-	brcmf_dbg(INFO, "Enter\n");
-
-	if (chipid == BCM4329_CHIP_ID)
-		ret = request_firmware(&bus->firmware, BRCMF_SDIO_4329_NV_NAME,
+	ret = request_firmware(&bus->firmware, BRCMF_SDIO_NV_NAME,
 			       &bus->sdiodev->func[2]->dev);
-	else if (chipid == BCM4330_CHIP_ID)
-		ret = request_firmware(&bus->firmware, BRCMF_SDIO_4330_NV_NAME,
-			       &bus->sdiodev->func[2]->dev);
-	else
-		ret = request_firmware(&bus->firmware, BRCMF_SDIO_NV_NAME,
-			       &bus->sdiodev->func[2]->dev);
-
 	if (ret) {
 		brcmf_dbg(ERROR, "Fail to request nvram %d\n", ret);
 		return ret;
@@ -3556,14 +3508,8 @@ static int brcmf_sdbrcm_bus_init(struct device *dev)
 	brcmf_sdcard_cfg_write(bus->sdiodev, SDIO_FUNC_1,
 			       SBSDIO_FUNC1_CHIPCLKCSR, saveclk, &err);
 
-	if (ret == 0) {
-		ret = brcmf_sdio_intr_register(bus->sdiodev);
-		if (ret != 0)
-			brcmf_dbg(ERROR, "intr register failed:%d\n", ret);
-	}
-
 	/* If we didn't come up, turn off backplane clock */
-	if (bus_if->state != BRCMF_BUS_DATA)
+	if (!ret)
 		brcmf_sdbrcm_clkctl(bus, CLK_NONE, false);
 
 exit:
@@ -3601,16 +3547,11 @@ void brcmf_sdbrcm_isr(void *arg)
 	if (!bus->intr)
 		brcmf_dbg(ERROR, "isr w/o interrupt configured!\n");
 
-#ifndef CONFIG_BRCMFMAC_SDIO_OOB
-	while (brcmf_sdbrcm_dpc(bus))
-		;
-#else
 	bus->dpc_sched = true;
 	if (bus->dpc_tsk) {
 		brcmf_sdbrcm_adddpctsk(bus);
 		complete(&bus->dpc_wait);
 	}
-#endif
 }
 
 static bool brcmf_sdbrcm_bus_watchdog(struct brcmf_sdio *bus)
@@ -3926,7 +3867,7 @@ static void brcmf_sdbrcm_release(struct brcmf_sdio *bus)
 
 	if (bus) {
 		/* De-register interrupt handler */
-		brcmf_sdio_intr_unregister(bus->sdiodev);
+		brcmf_sdcard_intr_dereg(bus->sdiodev);
 
 		if (bus->sdiodev->bus_if->drvr) {
 			brcmf_detach(bus->sdiodev->dev);
@@ -4026,6 +3967,15 @@ void *brcmf_sdbrcm_probe(u32 regsva, struct brcmf_sdio_dev *sdiodev)
 		brcmf_dbg(ERROR, "brcmf_sdbrcm_probe_init failed\n");
 		goto fail;
 	}
+
+	/* Register interrupt callback, but mask it (not operational yet). */
+	brcmf_dbg(INTR, "disable SDIO interrupts (not interested yet)\n");
+	ret = brcmf_sdcard_intr_reg(bus->sdiodev);
+	if (ret != 0) {
+		brcmf_dbg(ERROR, "FAILED: sdcard_intr_reg returned %d\n", ret);
+		goto fail;
+	}
+	brcmf_dbg(INTR, "registered SDIO interrupt function ok\n");
 
 	brcmf_dbg(INFO, "completed!!\n");
 

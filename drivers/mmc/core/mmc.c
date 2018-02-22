@@ -4,7 +4,6 @@
  *  Copyright (C) 2003-2004 Russell King, All Rights Reserved.
  *  Copyright (C) 2005-2007 Pierre Ossman, All Rights Reserved.
  *  MMCv4 support Copyright (C) 2006 Philip Langdale, All Rights Reserved.
- *  Copyright (c) 2012 NVIDIA Corporation, All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -97,7 +96,6 @@ static int mmc_decode_cid(struct mmc_card *card)
 		card->cid.prod_name[3]	= UNSTUFF_BITS(resp, 72, 8);
 		card->cid.prod_name[4]	= UNSTUFF_BITS(resp, 64, 8);
 		card->cid.prod_name[5]	= UNSTUFF_BITS(resp, 56, 8);
-		card->cid.prod_rev	= UNSTUFF_BITS(resp, 48, 8);
 		card->cid.serial	= UNSTUFF_BITS(resp, 16, 32);
 		card->cid.month		= UNSTUFF_BITS(resp, 12, 4);
 		card->cid.year		= UNSTUFF_BITS(resp, 8, 4) + 1997;
@@ -387,14 +385,13 @@ static int mmc_read_ext_csd(struct mmc_card *card, u8 *ext_csd)
 		ext_csd[EXT_CSD_SEC_FEATURE_SUPPORT];
 	card->ext_csd.raw_trim_mult =
 		ext_csd[EXT_CSD_TRIM_MULT];
-
+	card->ext_csd.raw_partition_support = ext_csd[EXT_CSD_PARTITION_SUPPORT];
 	if (card->ext_csd.rev >= 4) {
 		/*
 		 * Enhanced area feature support -- check whether the eMMC
 		 * card has the Enhanced area enabled.  If so, export enhanced
 		 * area offset and size to user by adding sysfs interface.
 		 */
-		card->ext_csd.raw_partition_support = ext_csd[EXT_CSD_PARTITION_SUPPORT];
 		if ((ext_csd[EXT_CSD_PARTITION_SUPPORT] & 0x2) &&
 		    (ext_csd[EXT_CSD_PARTITION_ATTRIBUTE] & 0x1)) {
 			hc_erase_grp_sz =
@@ -464,22 +461,12 @@ static int mmc_read_ext_csd(struct mmc_card *card, u8 *ext_csd)
 					MMC_BLK_DATA_AREA_GP);
 			}
 		}
-
-		if (card->ext_csd.rev < 6) {
-			card->ext_csd.sec_trim_mult =
-				ext_csd[EXT_CSD_SEC_TRIM_MULT];
-			card->ext_csd.sec_erase_mult =
-				ext_csd[EXT_CSD_SEC_ERASE_MULT];
-			card->ext_csd.sec_feature_support =
-				ext_csd[EXT_CSD_SEC_FEATURE_SUPPORT];
-		}
-
-		if (card->ext_csd.rev == 6) {
-			card->ext_csd.sec_feature_support =
-				ext_csd[EXT_CSD_SEC_FEATURE_SUPPORT] &
-				~(EXT_CSD_SEC_ER_EN | EXT_CSD_SEC_SANITIZE);
-		}
-
+		card->ext_csd.sec_trim_mult =
+			ext_csd[EXT_CSD_SEC_TRIM_MULT];
+		card->ext_csd.sec_erase_mult =
+			ext_csd[EXT_CSD_SEC_ERASE_MULT];
+		card->ext_csd.sec_feature_support =
+			ext_csd[EXT_CSD_SEC_FEATURE_SUPPORT];
 		card->ext_csd.trim_timeout = 300 *
 			ext_csd[EXT_CSD_TRIM_MULT];
 
@@ -491,11 +478,6 @@ static int mmc_read_ext_csd(struct mmc_card *card, u8 *ext_csd)
 		card->ext_csd.boot_ro_lock = ext_csd[EXT_CSD_BOOT_WP];
 		card->ext_csd.boot_ro_lockable = true;
 	}
-
-	card->ext_csd.max_packed_writes =
-			ext_csd[EXT_CSD_MAX_PACKED_WRITES];
-	card->ext_csd.max_packed_reads =
-			ext_csd[EXT_CSD_MAX_PACKED_READS];
 
 	if (card->ext_csd.rev >= 5) {
 		/* check whether the eMMC card supports HPI */
@@ -513,23 +495,11 @@ static int mmc_read_ext_csd(struct mmc_card *card, u8 *ext_csd)
 				ext_csd[EXT_CSD_OUT_OF_INTERRUPT_TIME] * 10;
 		}
 
-		/* Check whether the eMMC card supports background ops */
-		if (ext_csd[EXT_CSD_BKOPS_SUPPORT] & 0x1)
-			card->ext_csd.bk_ops = 1;
-
 		card->ext_csd.rel_param = ext_csd[EXT_CSD_WR_REL_PARAM];
 		card->ext_csd.rst_n_function = ext_csd[EXT_CSD_RST_N_FUNCTION];
-
-		/* Check whether the eMMC card needs proactive refresh */
-		if ((card->cid.manfid == 0x90) && ((card->cid.prod_rev == 0x73)
-			|| (card->cid.prod_rev == 0x7b)))
-			card->ext_csd.refresh = 1;
 	}
 
-	/* eMMC v4.5 or later */
-	if (card->ext_csd.rev >= 6)
-		card->ext_csd.feature_support |= MMC_DISCARD_FEATURE;
-
+	card->ext_csd.raw_erased_mem_count = ext_csd[EXT_CSD_ERASED_MEM_CONT];
 	if (ext_csd[EXT_CSD_ERASED_MEM_CONT])
 		card->erased_byte = 0xFF;
 	else
@@ -649,7 +619,6 @@ MMC_DEV_ATTR(hwrev, "0x%x\n", card->cid.hwrev);
 MMC_DEV_ATTR(manfid, "0x%06x\n", card->cid.manfid);
 MMC_DEV_ATTR(name, "%s\n", card->cid.prod_name);
 MMC_DEV_ATTR(oemid, "0x%04x\n", card->cid.oemid);
-MMC_DEV_ATTR(prv, "0x%x\n", card->cid.prod_rev);
 MMC_DEV_ATTR(serial, "0x%08x\n", card->cid.serial);
 MMC_DEV_ATTR(enhanced_area_offset, "%llu\n",
 		card->ext_csd.enhanced_area_offset);
@@ -666,7 +635,6 @@ static struct attribute *mmc_std_attrs[] = {
 	&dev_attr_manfid.attr,
 	&dev_attr_name.attr,
 	&dev_attr_oemid.attr,
-	&dev_attr_prv.attr,
 	&dev_attr_serial.attr,
 	&dev_attr_enhanced_area_offset.attr,
 	&dev_attr_enhanced_area_size.attr,
@@ -973,17 +941,6 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 		if (err)
 			goto free_card;
 
-		if (card->ext_csd.refresh) {
-			init_timer(&card->timer);
-			card->timer.data = (unsigned long) card;
-			card->timer.function = mmc_refresh;
-			card->timer.expires = MMC_BKOPS_INTERVAL <
-				MMC_REFRESH_INTERVAL ? MMC_BKOPS_INTERVAL :
-				MMC_REFRESH_INTERVAL;
-			card->timer.expires *= HZ;
-			card->timer.expires += jiffies;
-			add_timer(&card->timer);
-		}
 		/* If doing byte addressing, check if required to do sector
 		 * addressing.  Handle the case of <2GB cards needing sector
 		 * addressing.  See section 8.1 JEDEC Standard JED84-A441;
@@ -1092,39 +1049,6 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 				mmc_card_set_highspeed(card);
 				mmc_set_timing(card->host, MMC_TIMING_MMC_HS);
 			}
-		}
-	}
-
-	/*
-	 * Enable HPI feature (if supported)
-	 */
-	if (card->ext_csd.hpi) {
-		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
-			EXT_CSD_HPI_MGMT, 1, 0);
-		if (err && err != -EBADMSG)
-			goto free_card;
-		if (err) {
-			pr_warning("%s: Enabling HPI failed\n",
-				   mmc_hostname(card->host));
-			err = 0;
-		} else
-			card->ext_csd.hpi_en = 1;
-	}
-
-	/*
-	 * Enable Background ops feature (if supported)
-	 */
-	if (card->ext_csd.bk_ops && (card->host->caps2 & MMC_CAP2_BKOPS)) {
-		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
-			EXT_CSD_BKOPS_EN, 1, 0);
-		if (err && err != -EBADMSG)
-			goto free_card;
-		if (err) {
-			pr_warning("%s: Enabling BK ops failed\n",
-				   mmc_hostname(card->host));
-			err = 0;
-		} else {
-			card->ext_csd.bk_ops_en = 1;
 		}
 	}
 
@@ -1343,25 +1267,6 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 		}
 	}
 
-	if ((host->caps2 & MMC_CAP2_PACKED_CMD) &&
-		(card->ext_csd.max_packed_writes > 0) &&
-		(card->ext_csd.max_packed_reads > 0)) {
-			err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
-				EXT_CSD_EXP_EVENTS_CTRL,
-				EXT_CSD_PACKED_EVENT_EN,
-				card->ext_csd.generic_cmd6_time);
-			if (err && err != -EBADMSG)
-				goto free_card;
-			if (err) {
-				pr_warning("%s: Enabling packed event failed\n",
-					mmc_hostname(card->host));
-				card->ext_csd.packed_event_en = 0;
-				err = 0;
-			} else {
-				card->ext_csd.packed_event_en = 1;
-			}
-	}
-
 	if (!oldcard)
 		host->card = card;
 
@@ -1436,11 +1341,8 @@ static int mmc_suspend(struct mmc_host *host)
 	BUG_ON(!host);
 	BUG_ON(!host->card);
 
-	if (host->card->ext_csd.refresh)
-		del_timer_sync(&host->card->timer);
 	mmc_claim_host(host);
-	if (mmc_card_can_sleep(host) &&
-		!(host->caps2 & MMC_CAP2_NO_SLEEP_CMD)) {
+	if (mmc_card_can_sleep(host)) {
 		err = mmc_card_sleep(host);
 		if (!err)
 			mmc_card_set_sleep(host->card);
@@ -1464,15 +1366,9 @@ static int mmc_resume(struct mmc_host *host)
 
 	BUG_ON(!host);
 	BUG_ON(!host->card);
-	if (host->card->ext_csd.refresh) {
-		host->card->timer.expires = jiffies +
-			((MMC_BKOPS_INTERVAL < MMC_REFRESH_INTERVAL) ?
-			 MMC_BKOPS_INTERVAL : MMC_REFRESH_INTERVAL);
-		add_timer(&host->card->timer);
-	}
+
 	mmc_claim_host(host);
-	if (mmc_card_is_sleep(host->card) &&
-		!(host->caps2 & MMC_CAP2_NO_SLEEP_CMD)) {
+	if (mmc_card_is_sleep(host->card)) {
 		err = mmc_card_awake(host);
 		mmc_card_clr_sleep(host->card);
 	} else

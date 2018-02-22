@@ -13,10 +13,6 @@ menuconfig IOMMU_SUPPORT
 
 if IOMMU_SUPPORT
 
-config OF_IOMMU
-       def_bool y
-       depends on OF
-
 # MSM IOMMU support
 config MSM_IOMMU
 	bool "MSM IOMMU Support"
@@ -154,27 +150,16 @@ config TEGRA_IOMMU_GART
 	  Enables support for remapping discontiguous physical memory
 	  shared with the operating system into contiguous I/O virtual
 	  space through the GART (Graphics Address Relocation Table)
-	  hardware included on Tegra 2 SoCs.
+	  hardware included on Tegra SoCs.
 
 config TEGRA_IOMMU_SMMU
 	bool "Tegra SMMU IOMMU Support"
-	depends on ARCH_TEGRA_3x_SOC || ARCH_TEGRA_11x_SOC
+	depends on ARCH_TEGRA_3x_SOC
 	select IOMMU_API
 	help
 	  Enables support for remapping discontiguous physical memory
 	  shared with the operating system into contiguous I/O virtual
 	  space through the SMMU (System Memory Management Unit)
-	  hardware included on Tegra 3 SoCs and later.
-
-config TEGRA_IOMMU_SMMU_LINEAR
-	bool "Physical RAM IOVA Liner Mapping Support"
-	depends on TEGRA_IOMMU_SMMU && !PLATFORM_ENABLE_IOMMU
-	default y
-	help
-	  Enables support for linear mapping between physical address
-	  and IO virtual address for RAM. With this enabled, H/W can
-	  expect virt_to_phys() to work even if it's behined the
-	  IOMMU'able bus. Otherwise DMA API should be used correctly
-	  in device drivers.
+	  hardware included on Tegra SoCs.
 
 endif # IOMMU_SUPPORT

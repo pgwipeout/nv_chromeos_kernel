@@ -23,16 +23,11 @@
 #ifndef __MAX17042_BATTERY_H_
 #define __MAX17042_BATTERY_H_
 
-#include <linux/edp.h>
-
 #define MAX17042_STATUS_BattAbsent	(1 << 3)
 #define MAX17042_BATTERY_FULL	(100)
 #define MAX17042_DEFAULT_SNS_RESISTOR	(10000)
 
 #define MAX17042_CHARACTERIZATION_DATA_SIZE 48
-
-#define MAX_TEMP 70
-#define MIN_TEMP -70
 
 enum max17042_register {
 	MAX17042_STATUS		= 0x00,
@@ -121,18 +116,6 @@ enum max17042_register {
 	MAX17042_VFSOC		= 0xFF,
 };
 
-/* Registers specific to max17047/50 */
-enum max17047_register {
-	MAX17047_QRTbl00	= 0x12,
-	MAX17047_FullSOCThr	= 0x13,
-	MAX17047_QRTbl10	= 0x22,
-	MAX17047_QRTbl20	= 0x32,
-	MAX17047_V_empty	= 0x3A,
-	MAX17047_QRTbl30	= 0x42,
-};
-
-enum max170xx_chip_type {MAX17042, MAX17047};
-
 /*
  * used for setting a register to a desired value
  * addr : address for a register
@@ -161,7 +144,6 @@ struct max17042_config_data {
 	u16	shdntimer;	/* 0x03F */
 
 	/* App data */
-	u16	full_soc_thresh;	/* 0x13 */
 	u16	design_cap;	/* 0x18 */
 	u16	ichgt_term;	/* 0x1E */
 
@@ -180,10 +162,6 @@ struct max17042_config_data {
 	u16	lavg_empty;	/* 0x36 */
 	u16	dqacc;		/* 0x45 */
 	u16	dpacc;		/* 0x46 */
-	u16	qrtbl00;	/* 0x12 */
-	u16	qrtbl10;	/* 0x22 */
-	u16	qrtbl20;	/* 0x32 */
-	u16	qrtbl30;	/* 0x42 */
 
 	/* Cell technology from power_supply.h */
 	u16	cell_technology;
@@ -213,15 +191,6 @@ struct max17042_platform_data {
 	 * the datasheet although it can be changed by board designers.
 	 */
 	unsigned int r_sns;
-
-	struct edp_client *edp_client;
 };
 
-#ifdef CONFIG_BATTERY_MAX17042
-extern int maxim_get_temp(void);
-extern void max17042_update_status(int status);
-#else
-static inline int maxim_get_temp(void) { return -ENODEV; }
-static inline void max17042_update_status(int status) {}
-#endif
 #endif /* __MAX17042_BATTERY_H_ */

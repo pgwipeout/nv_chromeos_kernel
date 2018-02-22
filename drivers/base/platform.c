@@ -21,8 +21,6 @@
 #include <linux/slab.h>
 #include <linux/pm_runtime.h>
 
-#include <asm/dma-iommu.h>
-
 #include "base.h"
 
 #define to_platform_driver(drv)	(container_of((drv), struct platform_driver, \
@@ -307,26 +305,13 @@ int platform_device_add(struct platform_device *pdev)
 		 dev_name(&pdev->dev), dev_name(pdev->dev.parent));
 
 	ret = device_add(&pdev->dev);
-	if (ret)
-		goto failed;
-
-#ifdef CONFIG_PLATFORM_ENABLE_IOMMU
-	if (platform_bus_type.map && !pdev->dev.archdata.mapping) {
-		ret = arm_iommu_attach_device(&pdev->dev,
-					      platform_bus_type.map);
-		if (ret)
-			goto failed;
-	}
-#endif
-
-	return 0;
+	if (ret == 0)
+		return ret;
 
  failed:
 	while (--i >= 0) {
 		struct resource *r = &pdev->resource[i];
-		unsigned long type = resource_type(r);
-
-		if (type == IORESOURCE_MEM || type == IORESOURCE_IO)
+		if (r->parent)
 			release_resource(r);
 	}
 
@@ -351,9 +336,7 @@ void platform_device_del(struct platform_device *pdev)
 
 		for (i = 0; i < pdev->num_resources; i++) {
 			struct resource *r = &pdev->resource[i];
-			unsigned long type = resource_type(r);
-
-			if (type == IORESOURCE_MEM || type == IORESOURCE_IO)
+			if (r->parent)
 				release_resource(r);
 		}
 	}

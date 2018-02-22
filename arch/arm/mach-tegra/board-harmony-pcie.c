@@ -4,8 +4,6 @@
  * Copyright (C) 2010 CompuLab, Ltd.
  * Mike Rapoport <mike@compulab.co.il>
  *
- * Copyright (C) 2011-2012 NVIDIA Corporation.
- *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
  * may be copied, distributed, and modified under those terms.
@@ -24,24 +22,12 @@
 
 #include <asm/mach-types.h>
 
-#include <mach/pci.h>
-#include "devices.h"
 #include "board.h"
 #include "board-harmony.h"
 
 #ifdef CONFIG_TEGRA_PCI
 
-/* GPIO 3 of the PMIC */
-#define EN_VDD_1V05_GPIO	(TEGRA_NR_GPIOS + 2)
-
-static struct tegra_pci_platform_data harmony_pci_platform_data = {
-	.port_status[0]	= 1,
-	.port_status[1]	= 1,
-	.use_dock_detect	= 0,
-	.gpio		= 0,
-};
-
-int __init harmony_pcie_init(void)
+static int __init harmony_pcie_init(void)
 {
 	struct regulator *regulator = NULL;
 	int err;
@@ -61,11 +47,13 @@ int __init harmony_pcie_init(void)
 
 	regulator_enable(regulator);
 
-	tegra_pci_device.dev.platform_data = &harmony_pci_platform_data;
-	platform_device_register(&tegra_pci_device);
+	err = tegra_pcie_init(true, true);
+	if (err)
+		goto err_pcie;
 
 	return 0;
 
+err_pcie:
 	regulator_disable(regulator);
 	regulator_put(regulator);
 err_reg:
@@ -73,5 +61,8 @@ err_reg:
 
 	return err;
 }
+
+/* PCI should be initialized after I2C, mfd and regulators */
+subsys_initcall_sync(harmony_pcie_init);
 
 #endif

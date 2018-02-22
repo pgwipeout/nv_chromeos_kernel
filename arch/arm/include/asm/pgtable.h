@@ -45,8 +45,6 @@
 #define LIBRARY_TEXT_START	0x0c000000
 
 #ifndef __ASSEMBLY__
-#include <linux/spinlock.h>
-
 extern void __pte_error(const char *file, int line, pte_t);
 extern void __pmd_error(const char *file, int line, pmd_t);
 extern void __pgd_error(const char *file, int line, pgd_t);
@@ -61,6 +59,15 @@ extern void __pgd_error(const char *file, int line, pgd_t);
  * non-high vector CPUs.
  */
 #define FIRST_USER_ADDRESS	PAGE_SIZE
+
+/*
+ * Use TASK_SIZE as the ceiling argument for free_pgtables() and
+ * free_pgd_range() to avoid freeing the modules pmd when LPAE is enabled (pmd
+ * page shared between user and kernel).
+ */
+#ifdef CONFIG_ARM_LPAE
+#define USER_PGTABLES_CEILING	TASK_SIZE
+#endif
 
 /*
  * The pgprot_* and protection_map entries will be fixed up in runtime
@@ -117,9 +124,6 @@ extern pgprot_t phys_mem_access_prot(struct file *file, unsigned long pfn,
 	__pgprot_modify(prot, L_PTE_MT_MASK, L_PTE_MT_UNCACHED | L_PTE_XN)
 #endif
 
-#define pgprot_inner_writeback(prot) \
-	__pgprot_modify(prot, L_PTE_MT_MASK, L_PTE_MT_INNER_WB)
-
 #endif /* __ASSEMBLY__ */
 
 /*
@@ -170,24 +174,6 @@ extern pgd_t swapper_pg_dir[PTRS_PER_PGD];
 #define pmd_none(pmd)		(!pmd_val(pmd))
 #define pmd_present(pmd)	(pmd_val(pmd))
 
-extern spinlock_t pgd_lock;
-extern struct list_head pgd_list;
-
-pte_t *lookup_address(unsigned long address, unsigned int *level);
-enum {
-	PG_LEVEL_NONE,
-	PG_LEVEL_4K,
-	PG_LEVEL_2M,
-	PG_LEVEL_NUM
-};
-
-#ifdef CONFIG_PROC_FS
-extern void update_page_count(int level, unsigned long pages);
-#else
-static inline void update_page_count(int level, unsigned long pages) { }
-#endif
-
-
 static inline pte_t *pmd_page_vaddr(pmd_t pmd)
 {
 	return __va(pmd_val(pmd) & PHYS_MASK & (s32)PAGE_MASK);
@@ -213,32 +199,10 @@ static inline pte_t *pmd_page_vaddr(pmd_t pmd)
 #define pte_pfn(pte)		((pte_val(pte) & PHYS_MASK) >> PAGE_SHIFT)
 #define pfn_pte(pfn,prot)	__pte(__pfn_to_phys(pfn) | pgprot_val(prot))
 
-#define pmd_pfn(pmd)		((pmd_val(pmd) & SECTION_MASK) >> PAGE_SHIFT)
-#define pte_pgprot(pte)		((pgprot_t)(pte_val(pte) & ~PAGE_MASK))
-
 #define pte_page(pte)		pfn_to_page(pte_pfn(pte))
 #define mk_pte(page,prot)	pfn_pte(page_to_pfn(page), prot)
 
 #define pte_clear(mm,addr,ptep)	set_pte_ext(ptep, __pte(0), 0)
-
-#if __LINUX_ARM_ARCH__ < 6
-static inline void __sync_icache_dcache(pte_t pteval)
-{
-}
-#else
-extern void __sync_icache_dcache(pte_t pteval);
-#endif
-
-static inline void set_pte_at(struct mm_struct *mm, unsigned long addr,
-			      pte_t *ptep, pte_t pteval)
-{
-	if (addr >= TASK_SIZE)
-		set_pte_ext(ptep, pteval, 0);
-	else {
-		__sync_icache_dcache(pteval);
-		set_pte_ext(ptep, pteval, PTE_EXT_NG);
-	}
-}
 
 #define pte_none(pte)		(!pte_val(pte))
 #define pte_present(pte)	(pte_val(pte) & L_PTE_PRESENT)
@@ -251,6 +215,27 @@ static inline void set_pte_at(struct mm_struct *mm, unsigned long addr,
 #define pte_present_user(pte) \
 	((pte_val(pte) & (L_PTE_PRESENT | L_PTE_USER)) == \
 	 (L_PTE_PRESENT | L_PTE_USER))
+
+#if __LINUX_ARM_ARCH__ < 6
+static inline void __sync_icache_dcache(pte_t pteval)
+{
+}
+#else
+extern void __sync_icache_dcache(pte_t pteval);
+#endif
+
+static inline void set_pte_at(struct mm_struct *mm, unsigned long addr,
+			      pte_t *ptep, pte_t pteval)
+{
+	unsigned long ext = 0;
+
+	if (addr < TASK_SIZE && pte_present_user(pteval)) {
+		__sync_icache_dcache(pteval);
+		ext |= PTE_EXT_NG;
+	}
+
+	set_pte_ext(ptep, pteval, ext);
+}
 
 #define PTE_BIT_FUNC(fn,op) \
 static inline pte_t pte_##fn(pte_t pte) { pte_val(pte) op; return pte; }
@@ -277,13 +262,13 @@ static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
  *
  *   3 3 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1
  *   1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
- *   <--------------- offset --------------------> <- type --> 0 0 0
+ *   <--------------- offset ----------------------> < type -> 0 0 0
  *
- * This gives us up to 63 swap files and 32GB per swap file.  Note that
+ * This gives us up to 31 swap files and 64GB per swap file.  Note that
  * the offset field is always non-zero.
  */
 #define __SWP_TYPE_SHIFT	3
-#define __SWP_TYPE_BITS		6
+#define __SWP_TYPE_BITS		5
 #define __SWP_TYPE_MASK		((1 << __SWP_TYPE_BITS) - 1)
 #define __SWP_OFFSET_SHIFT	(__SWP_TYPE_BITS + __SWP_TYPE_SHIFT)
 

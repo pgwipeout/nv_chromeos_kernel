@@ -14,7 +14,6 @@ struct tag;
 struct meminfo;
 struct sys_timer;
 struct pt_regs;
-struct arm_soc_desc;
 
 struct machine_desc {
 	unsigned int		nr;		/* architecture number	*/
@@ -36,7 +35,6 @@ struct machine_desc {
 	unsigned char		reserve_lp1 :1;	/* never has lp1	*/
 	unsigned char		reserve_lp2 :1;	/* never has lp2	*/
 	char			restart_mode;	/* default restart mode	*/
-	struct arm_soc_desc	*soc;		/* SoC descriptor	*/
 	void			(*fixup)(struct tag *, char **,
 					 struct meminfo *);
 	void			(*reserve)(void);/* reserve mem blocks	*/

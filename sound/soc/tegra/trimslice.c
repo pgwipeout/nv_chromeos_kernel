@@ -152,7 +152,7 @@ static __devinit int tegra_snd_trimslice_probe(struct platform_device *pdev)
 		goto err;
 	}
 
-	ret = tegra_asoc_utils_init(&trimslice->util_data, &pdev->dev, card);
+	ret = tegra_asoc_utils_init(&trimslice->util_data, &pdev->dev);
 	if (ret)
 		goto err;
 

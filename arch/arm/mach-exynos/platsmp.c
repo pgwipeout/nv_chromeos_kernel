@@ -32,8 +32,6 @@
 
 #include <plat/cpu.h>
 
-#include "common.h"
-
 extern void exynos4_secondary_startup(void);
 
 #define CPU1_BOOT_REG		(samsung_rev() == EXYNOS4210_REV_1_1 ? \
@@ -66,7 +64,7 @@ static void __iomem *scu_base_addr(void)
 
 static DEFINE_SPINLOCK(boot_lock);
 
-static void __cpuinit exynos4_secondary_init(unsigned int cpu)
+void __cpuinit platform_secondary_init(unsigned int cpu)
 {
 	/*
 	 * if any interrupts are already enabled for the primary
@@ -88,7 +86,7 @@ static void __cpuinit exynos4_secondary_init(unsigned int cpu)
 	spin_unlock(&boot_lock);
 }
 
-static int __cpuinit exynos4_boot_secondary(unsigned int cpu, struct task_struct *idle)
+int __cpuinit boot_secondary(unsigned int cpu, struct task_struct *idle)
 {
 	unsigned long timeout;
 
@@ -163,7 +161,7 @@ static int __cpuinit exynos4_boot_secondary(unsigned int cpu, struct task_struct
  * which may be present or become present in the system.
  */
 
-static void __init exynos4_smp_init_cpus(void)
+void __init smp_init_cpus(void)
 {
 	void __iomem *scu_base = scu_base_addr();
 	unsigned int i, ncores;
@@ -186,7 +184,7 @@ static void __init exynos4_smp_init_cpus(void)
 	set_smp_cross_call(gic_raise_softirq);
 }
 
-static void __init exynos4_smp_prepare_cpus(unsigned int max_cpus)
+void __init platform_smp_prepare_cpus(unsigned int max_cpus)
 {
 	if (!soc_is_exynos5250())
 		scu_enable(scu_base_addr());
@@ -200,18 +198,3 @@ static void __init exynos4_smp_prepare_cpus(unsigned int max_cpus)
 	__raw_writel(virt_to_phys(exynos4_secondary_startup),
 			CPU1_BOOT_REG);
 }
-
-struct arm_soc_smp_init_ops exynos4_soc_smp_init_ops __initdata = {
-	.smp_init_cpus		= exynos4_smp_init_cpus,
-	.smp_prepare_cpus	= exynos4_smp_prepare_cpus,
-};
-
-struct arm_soc_smp_ops exynos4_soc_smp_ops __initdata = {
-	.smp_secondary_init	= exynos4_secondary_init,
-	.smp_boot_secondary	= exynos4_boot_secondary,
-#ifdef CONFIG_HOTPLUG_CPU
-	.cpu_kill		= dummy_cpu_kill,
-	.cpu_die		= exynos4_cpu_die,
-	.cpu_disable		= dummy_cpu_disable,
-#endif
-};

@@ -16,15 +16,10 @@
 #include <linux/delay.h>
 #include <mach/common.h>
 #include <asm/cacheflush.h>
-#include <asm/mach-types.h>
 
 static cpumask_t dead_cpus;
 
-#include <mach/common.h>
-
-#define is_r8a7779() machine_is_marzen()
-
-int shmobile_cpu_kill(unsigned int cpu)
+int platform_cpu_kill(unsigned int cpu)
 {
 	int k;
 
@@ -34,7 +29,7 @@ int shmobile_cpu_kill(unsigned int cpu)
 	 */
 	for (k = 0; k < 1000; k++) {
 		if (cpumask_test_cpu(cpu, &dead_cpus))
-			return is_r8a7779() ? r8a7779_platform_cpu_kill(cpu) : 1;
+			return shmobile_platform_cpu_kill(cpu);
 
 		mdelay(1);
 	}
@@ -42,7 +37,7 @@ int shmobile_cpu_kill(unsigned int cpu)
 	return 0;
 }
 
-void shmobile_cpu_die(unsigned int cpu)
+void platform_cpu_die(unsigned int cpu)
 {
 	/* hardware shutdown code running on the CPU that is being offlined */
 	flush_cache_all();
@@ -65,7 +60,7 @@ void shmobile_cpu_die(unsigned int cpu)
 	}
 }
 
-int shmobile_cpu_disable(unsigned int cpu)
+int platform_cpu_disable(unsigned int cpu)
 {
 	cpumask_clear_cpu(cpu, &dead_cpus);
 	/*

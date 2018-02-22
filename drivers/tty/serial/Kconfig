@@ -197,7 +197,7 @@ config SERIAL_SAMSUNG_UARTS_4
 config SERIAL_SAMSUNG_UARTS
 	int
 	depends on ARM && PLAT_SAMSUNG
-	default 6 if ARCH_S5P6450
+	default 6 if CPU_S5P6450
 	default 4 if SERIAL_SAMSUNG_UARTS_4 || CPU_S3C2416
 	default 3
 	help
@@ -249,15 +249,6 @@ config SERIAL_SIRFSOC_CONSOLE
           "console=ttySiRFx". (Try "man bootparam" or see the documentation of
           your boot loader about how to pass options to the kernel at
           boot time.)
-
-config SERIAL_TEGRA
-	boolean "High speed serial support for NVIDIA Tegra SoCs"
-	depends on ARCH_TEGRA && TEGRA_SYSTEM_DMA
-	select SERIAL_CORE
-	help
-	  Support for the on-chip UARTs on NVIDIA Tegra SoC, providing
-	  /dev/ttyHSx, where x is determined by the number of UARTs on the
-	  platform
 
 config SERIAL_MAX3100
 	tristate "MAX3100 support"

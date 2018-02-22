@@ -35,7 +35,6 @@ struct subsys_private;
 struct bus_type;
 struct device_node;
 struct iommu_ops;
-struct dma_iommu_mapping;
 
 struct bus_attribute {
 	struct attribute	attr;
@@ -107,9 +106,7 @@ struct bus_type {
 	const struct dev_pm_ops *pm;
 
 	struct iommu_ops *iommu_ops;
-#ifdef CONFIG_PLATFORM_ENABLE_IOMMU
-	struct dma_iommu_mapping *map;
-#endif
+
 	struct subsys_private *p;
 };
 
@@ -664,10 +661,6 @@ struct device {
 
 	struct dma_coherent_mem	*dma_mem; /* internal for coherent mem
 					     override */
-#ifdef CONFIG_CMA
-	struct cma *cma_area;		/* contiguous memory area for dma
-					   allocations */
-#endif
 	/* arch specific additions */
 	struct dev_archdata	archdata;
 
@@ -841,6 +834,11 @@ extern struct device *device_create_vargs(struct class *cls,
 extern __printf(5, 6)
 struct device *device_create(struct class *cls, struct device *parent,
 			     dev_t devt, void *drvdata,
+			     const char *fmt, ...);
+extern __printf(6, 7)
+struct device *device_create_with_groups(struct class *cls,
+			     struct device *parent, dev_t devt, void *drvdata,
+			     const struct attribute_group **groups,
 			     const char *fmt, ...);
 extern void device_destroy(struct class *cls, dev_t devt);
 

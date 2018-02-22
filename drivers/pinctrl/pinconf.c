@@ -28,17 +28,11 @@ int pinconf_check_ops(struct pinctrl_dev *pctldev)
 	const struct pinconf_ops *ops = pctldev->desc->confops;
 
 	/* We must be able to read out pin status */
-	if (!ops->pin_config_get && !ops->pin_config_group_get) {
-		dev_err(pctldev->dev,
-			"pinconf must be able to read out pin status\n");
+	if (!ops->pin_config_get && !ops->pin_config_group_get)
 		return -EINVAL;
-	}
 	/* We have to be able to config the pins in SOME way */
-	if (!ops->pin_config_set && !ops->pin_config_group_set) {
-		dev_err(pctldev->dev,
-			"pinconf has to be able to set a pins config\n");
+	if (!ops->pin_config_set && !ops->pin_config_group_set)
 		return -EINVAL;
-	}
 	return 0;
 }
 
@@ -50,9 +44,9 @@ int pinconf_validate_map(struct pinctrl_map const *map, int i)
 		return -EINVAL;
 	}
 
-	if (!map->data.configs.num_configs ||
+	if (map->data.configs.num_configs &&
 			!map->data.configs.configs) {
-		pr_err("failed to register map %s (%d): no configs given\n",
+		pr_err("failed to register map %s (%d): no configs ptr given\n",
 		       map->name, i);
 		return -EINVAL;
 	}
@@ -385,15 +379,7 @@ int pinconf_apply_setting(struct pinctrl_setting const *setting)
 
 void pinconf_show_map(struct seq_file *s, struct pinctrl_map const *map)
 {
-	struct pinctrl_dev *pctldev;
-	const struct pinconf_ops *confops;
 	int i;
-
-	pctldev = get_pinctrl_dev_from_devname(map->ctrl_dev_name);
-	if (pctldev)
-		confops = pctldev->desc->confops;
-	else
-		confops = NULL;
 
 	switch (map->type) {
 	case PIN_MAP_TYPE_CONFIGS_PIN:
@@ -408,15 +394,8 @@ void pinconf_show_map(struct seq_file *s, struct pinctrl_map const *map)
 
 	seq_printf(s, "%s\n", map->data.configs.group_or_pin);
 
-	for (i = 0; i < map->data.configs.num_configs; i++) {
-		seq_printf(s, "config ");
-		if (confops && confops->pin_config_config_dbg_show)
-			confops->pin_config_config_dbg_show(pctldev, s,
-						map->data.configs.configs[i]);
-		else
-			seq_printf(s, "%08lx", map->data.configs.configs[i]);
-		seq_printf(s, "\n");
-	}
+	for (i = 0; i < map->data.configs.num_configs; i++)
+		seq_printf(s, "config %08lx\n", map->data.configs.configs[i]);
 }
 
 void pinconf_show_setting(struct seq_file *s,
@@ -424,7 +403,6 @@ void pinconf_show_setting(struct seq_file *s,
 {
 	struct pinctrl_dev *pctldev = setting->pctldev;
 	const struct pinctrl_ops *pctlops = pctldev->desc->pctlops;
-	const struct pinconf_ops *confops = pctldev->desc->confops;
 	struct pin_desc *desc;
 	int i;
 
@@ -450,15 +428,8 @@ void pinconf_show_setting(struct seq_file *s,
 	 * FIXME: We should really get the pin controler to dump the config
 	 * values, so they can be decoded to something meaningful.
 	 */
-	for (i = 0; i < setting->data.configs.num_configs; i++) {
-		seq_printf(s, " ");
-		if (confops && confops->pin_config_config_dbg_show)
-			confops->pin_config_config_dbg_show(pctldev, s,
-				setting->data.configs.configs[i]);
-		else
-			seq_printf(s, "%08lx",
-				   setting->data.configs.configs[i]);
-	}
+	for (i = 0; i < setting->data.configs.num_configs; i++)
+		seq_printf(s, " %08lx", setting->data.configs.configs[i]);
 
 	seq_printf(s, "\n");
 }
@@ -477,14 +448,10 @@ static void pinconf_dump_pin(struct pinctrl_dev *pctldev,
 static int pinconf_pins_show(struct seq_file *s, void *what)
 {
 	struct pinctrl_dev *pctldev = s->private;
-	const struct pinconf_ops *ops = pctldev->desc->confops;
 	unsigned i, pin;
 
-	if (!ops || !ops->pin_config_get)
-		return 0;
-
 	seq_puts(s, "Pin config settings per pin\n");
-	seq_puts(s, "Format: pin (name): configs\n");
+	seq_puts(s, "Format: pin (name): pinmux setting array\n");
 
 	mutex_lock(&pinctrl_mutex);
 
@@ -528,18 +495,17 @@ static int pinconf_groups_show(struct seq_file *s, void *what)
 	struct pinctrl_dev *pctldev = s->private;
 	const struct pinctrl_ops *pctlops = pctldev->desc->pctlops;
 	const struct pinconf_ops *ops = pctldev->desc->confops;
-	unsigned ngroups = pctlops->get_groups_count(pctldev);
 	unsigned selector = 0;
 
 	if (!ops || !ops->pin_config_group_get)
 		return 0;
 
 	seq_puts(s, "Pin config settings per pin group\n");
-	seq_puts(s, "Format: group (name): configs\n");
+	seq_puts(s, "Format: group (name): pinmux setting array\n");
 
 	mutex_lock(&pinctrl_mutex);
 
-	while (selector < ngroups) {
+	while (pctlops->list_groups(pctldev, selector) >= 0) {
 		const char *gname = pctlops->get_group_name(pctldev, selector);
 
 		seq_printf(s, "%u (%s):", selector, gname);

@@ -28,7 +28,6 @@
 
 #include <mach/iomap.h>
 #include <mach/irammap.h>
-#include <mach/io.h>
 
 		.macro  addruart, rp, rv, tmp
 		adr	\rp, 99f		@ actual addr of 99f

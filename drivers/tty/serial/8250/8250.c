@@ -273,8 +273,7 @@ static const struct serial8250_config uart_config[] = {
 		.tx_loadsz	= 8,
 		.fcr		= UART_FCR_ENABLE_FIFO | UART_FCR_R_TRIG_01 |
 				  UART_FCR_T_TRIG_01,
-		.flags		= UART_CAP_FIFO | UART_CAP_RTOIE |
-				  UART_CAP_HW_CTSRTS,
+		.flags		= UART_CAP_FIFO | UART_CAP_RTOIE,
 	},
 	[PORT_XR17D15X] = {
 		.name		= "XR17D15X",
@@ -282,6 +281,33 @@ static const struct serial8250_config uart_config[] = {
 		.tx_loadsz	= 64,
 		.fcr		= UART_FCR_ENABLE_FIFO | UART_FCR_R_TRIG_10,
 		.flags		= UART_CAP_FIFO | UART_CAP_AFE | UART_CAP_EFR,
+	},
+	[PORT_BRCM_TRUMANAGE] = {
+		.name		= "TruManage",
+		.fifo_size	= 1,
+		.tx_loadsz	= 1024,
+		.flags		= UART_CAP_HFIFO,
+	},
+	[PORT_ALTR_16550_F32] = {
+		.name		= "Altera 16550 FIFO32",
+		.fifo_size	= 32,
+		.tx_loadsz	= 32,
+		.fcr		= UART_FCR_ENABLE_FIFO | UART_FCR_R_TRIG_10,
+		.flags		= UART_CAP_FIFO | UART_CAP_AFE,
+	},
+	[PORT_ALTR_16550_F64] = {
+		.name		= "Altera 16550 FIFO64",
+		.fifo_size	= 64,
+		.tx_loadsz	= 64,
+		.fcr		= UART_FCR_ENABLE_FIFO | UART_FCR_R_TRIG_10,
+		.flags		= UART_CAP_FIFO | UART_CAP_AFE,
+	},
+	[PORT_ALTR_16550_F128] = {
+		.name		= "Altera 16550 FIFO128",
+		.fifo_size	= 128,
+		.tx_loadsz	= 128,
+		.fcr		= UART_FCR_ENABLE_FIFO | UART_FCR_R_TRIG_10,
+		.flags		= UART_CAP_FIFO | UART_CAP_AFE,
 	},
 };
 
@@ -844,7 +870,7 @@ static int broken_efr(struct uart_8250_port *up)
 	/*
 	 * Exar ST16C2550 "A2" devices incorrectly detect as
 	 * having an EFR, and report an ID of 0x0201.  See
-	 * http://linux.derkeiler.com/Mailing-Lists/Kernel/2004-11/4812.html
+	 * http://linux.derkeiler.com/Mailing-Lists/Kernel/2004-11/4812.html 
 	 */
 	if (autoconfig_read_divisor_id(up) == 0x0201 && size_fifo(up) == 16)
 		return 1;
@@ -912,7 +938,6 @@ static void autoconfig_16550a(struct uart_8250_port *up)
 		return;
 	}
 
-#ifdef CONFIG_HAS_NS_SUPER_IO_CHIP
 	/*
 	 * Check for a National Semiconductor SuperIO chip.
 	 * Attempt to switch to bank 2, read the value of the LOOP bit
@@ -952,7 +977,6 @@ static void autoconfig_16550a(struct uart_8250_port *up)
 			return;
 		}
 	}
-#endif
 
 	/*
 	 * No EFR.  Try to detect a TI16750, which only sets bit 5 of
@@ -1473,6 +1497,11 @@ void serial8250_tx_chars(struct uart_8250_port *up)
 		port->icount.tx++;
 		if (uart_circ_empty(xmit))
 			break;
+		if (up->capabilities & UART_CAP_HFIFO) {
+			if ((serial_port_in(port, UART_LSR) & BOTH_EMPTY) !=
+			    BOTH_EMPTY)
+				break;
+		}
 	} while (--count > 0);
 
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
@@ -1808,13 +1837,8 @@ static void serial8250_set_mctrl(struct uart_port *port, unsigned int mctrl)
 		container_of(port, struct uart_8250_port, port);
 	unsigned char mcr = 0;
 
-	if (up->port.type == PORT_TEGRA) {
-		if (mctrl & TIOCM_RTS)
-			mcr |= UART_MCR_HW_RTS;
-	} else {
-		if (mctrl & TIOCM_RTS)
-			mcr |= UART_MCR_RTS;
-	}
+	if (mctrl & TIOCM_RTS)
+		mcr |= UART_MCR_RTS;
 	if (mctrl & TIOCM_DTR)
 		mcr |= UART_MCR_DTR;
 	if (mctrl & TIOCM_OUT1)
@@ -2379,19 +2403,6 @@ serial8250_do_set_termios(struct uart_port *port, struct ktermios *termios,
 			serial_port_out(port, UART_EFR, efr);
 	}
 
-	if (up->capabilities & UART_CAP_HW_CTSRTS) {
-		unsigned char mcr = serial_port_in(port, UART_MCR);
-		/*
-		 * TEGRA UART core support the auto control of the RTS and CTS
-		 * flow control.
-		 */
-		if (termios->c_cflag & CRTSCTS)
-			mcr |= UART_MCR_HW_CTS;
-		else
-			mcr &= ~UART_MCR_HW_CTS;
-		serial_port_out(port, UART_MCR, mcr);
-	}
-
 #ifdef CONFIG_ARCH_OMAP
 	/* Workaround to enable 115200 baud on OMAP1510 internal ports */
 	if (cpu_is_omap1510() && is_omap_port(up)) {
@@ -2647,9 +2658,6 @@ static void serial8250_config_port(struct uart_port *port, int flags)
 	if (port->type == PORT_16550A && port->iotype == UPIO_AU)
 		up->bugs |= UART_BUG_NOMSR;
 
-	if (port->type == PORT_TEGRA)
-		up->bugs |= UART_BUG_NOMSR;
-
 	if (port->type != PORT_UNKNOWN && flags & UART_CONFIG_IRQ)
 		autoconfig_irq(up);
 
@@ -2665,7 +2673,7 @@ serial8250_verify_port(struct uart_port *port, struct serial_struct *ser)
 	if (ser->irq >= nr_irqs || ser->irq < 0 ||
 	    ser->baud_base < 9600 || ser->type < PORT_UNKNOWN ||
 	    ser->type >= ARRAY_SIZE(uart_config) || ser->type == PORT_CIRRUS ||
-	    ser->type == PORT_STARTECH)
+	    ser->type == PORT_STARTECH || uart_config[ser->type].name == NULL)
 		return -EINVAL;
 	return 0;
 }
@@ -2675,7 +2683,7 @@ serial8250_type(struct uart_port *port)
 {
 	int type = port->type;
 
-	if (type >= ARRAY_SIZE(uart_config))
+	if (type >= ARRAY_SIZE(uart_config) || uart_config[type].name == NULL)
 		type = 0;
 	return uart_config[type].name;
 }

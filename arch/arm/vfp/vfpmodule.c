@@ -413,7 +413,7 @@ void VFP_bounce(u32 trigger, u32 fpexc, struct pt_regs *regs)
 	 * If there isn't a second FP instruction, exit now. Note that
 	 * the FPEXC.FP2V bit is valid only if FPEXC.EX is 1.
 	 */
-	if (fpexc ^ (FPEXC_EX | FPEXC_FP2V))
+	if ((fpexc & (FPEXC_EX | FPEXC_FP2V)) != (FPEXC_EX | FPEXC_FP2V))
 		goto exit;
 
 	/*
@@ -450,15 +450,9 @@ static int vfp_pm_suspend(void)
 	struct thread_info *ti = current_thread_info();
 	u32 fpexc = fmrx(FPEXC);
 
-	/* If lazy disable, re-enable the VFP ready for it to be saved */
-	if (vfp_current_hw_state[ti->cpu] != &ti->vfpstate) {
-		fpexc |= FPEXC_EN;
-		fmxr(FPEXC, fpexc);
-	}
-
 	/* if vfp is on, then save state for resumption */
 	if (fpexc & FPEXC_EN) {
-		//printk(KERN_DEBUG "%s: saving vfp state\n", __func__);
+		printk(KERN_DEBUG "%s: saving vfp state\n", __func__);
 		vfp_save_state(&ti->vfpstate, fpexc);
 
 		/* disable, just in case */
@@ -589,12 +583,6 @@ int vfp_preserve_user_clear_hwstate(struct user_vfp __user *ufp,
 	 * entry.
 	 */
 	hwstate->fpscr &= ~(FPSCR_LENGTH_MASK | FPSCR_STRIDE_MASK);
-
-	/*
-	 * Disable VFP in the hwstate so that we can detect if it gets
-	 * used.
-	 */
-	hwstate->fpexc &= ~FPEXC_EN;
 	return 0;
 }
 
@@ -607,12 +595,8 @@ int vfp_restore_user_hwstate(struct user_vfp __user *ufp,
 	unsigned long fpexc;
 	int err = 0;
 
-	/*
-	 * If VFP has been used, then disable it to avoid corrupting
-	 * the new thread state.
-	 */
-	if (hwstate->fpexc & FPEXC_EN)
-		vfp_flush_hwstate(thread);
+	/* Disable VFP to avoid corrupting the new thread state. */
+	vfp_flush_hwstate(thread);
 
 	/*
 	 * Copy the floating point registers. There can be unused
@@ -717,11 +701,14 @@ static int __init vfp_init(void)
 			elf_hwcap |= HWCAP_VFPv3;
 
 			/*
-			 * Check for VFPv3 D16. CPUs in this configuration
-			 * only have 16 x 64bit registers.
+			 * Check for VFPv3 D16 and VFPv4 D16.  CPUs in
+			 * this configuration only have 16 x 64bit
+			 * registers.
 			 */
 			if (((fmrx(MVFR0) & MVFR0_A_SIMD_MASK)) == 1)
-				elf_hwcap |= HWCAP_VFPv3D16;
+				elf_hwcap |= HWCAP_VFPv3D16; /* also v4-D16 */
+			else
+				elf_hwcap |= HWCAP_VFPD32;
 		}
 #endif
 		/*
@@ -735,8 +722,10 @@ static int __init vfp_init(void)
 			if ((fmrx(MVFR1) & 0x000fff00) == 0x00011100)
 				elf_hwcap |= HWCAP_NEON;
 #endif
+#ifdef CONFIG_VFPv3
 			if ((fmrx(MVFR1) & 0xf0000000) == 0x10000000)
 				elf_hwcap |= HWCAP_VFPv4;
+#endif
 		}
 	}
 	return 0;

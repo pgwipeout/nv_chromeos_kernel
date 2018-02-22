@@ -18,14 +18,11 @@
 #include <asm/hardware/gic.h>
 #include <asm/mach/map.h>
 
-#include <asm/smp_plat.h>
-#include <asm/soc.h>
-
 #include <mach/motherboard.h>
 
-#include <plat/platsmp.h>
-
 #include "core.h"
+
+extern void versatile_secondary_startup(void);
 
 #if defined(CONFIG_OF)
 
@@ -170,7 +167,7 @@ void __init vexpress_dt_smp_prepare_cpus(unsigned int max_cpus)
  * Initialise the CPU possible map early - this describes the CPUs
  * which may be present or become present in the system.
  */
-static void __init vexpress_smp_init_cpus(void)
+void __init smp_init_cpus(void)
 {
 	if (ct_desc)
 		ct_desc->init_cpu_map();
@@ -179,7 +176,7 @@ static void __init vexpress_smp_init_cpus(void)
 
 }
 
-static void __init vexpress_smp_prepare_cpus(unsigned int max_cpus)
+void __init platform_smp_prepare_cpus(unsigned int max_cpus)
 {
 	/*
 	 * Initialise the present map, which describes the set of CPUs
@@ -198,18 +195,3 @@ static void __init vexpress_smp_prepare_cpus(unsigned int max_cpus)
 	 */
 	v2m_flags_set(virt_to_phys(versatile_secondary_startup));
 }
-
-struct arm_soc_smp_init_ops vexpress_soc_smp_init_ops __initdata = {
-	.smp_init_cpus		= vexpress_smp_init_cpus,
-	.smp_prepare_cpus	= vexpress_smp_prepare_cpus,
-};
-
-struct arm_soc_smp_ops vexpress_soc_smp_ops __initdata = {
-	.smp_secondary_init	= versatile_secondary_init,
-	.smp_boot_secondary	= versatile_boot_secondary,
-#ifdef CONFIG_HOTPLUG_CPU
-	.cpu_kill		= dummy_cpu_kill,
-	.cpu_die		= vexpress_cpu_die,
-	.cpu_disable		= dummy_cpu_disable,
-#endif
-};

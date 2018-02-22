@@ -19,11 +19,8 @@
 #include <linux/clkdev.h>
 #include <linux/mtd/physmap.h>
 
-#include <asm/arch_timer.h>
 #include <asm/mach-types.h>
-#include <asm/soc.h>
 #include <asm/sizes.h>
-#include <asm/smp_twd.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 #include <asm/mach/time.h>
@@ -38,7 +35,6 @@
 #include <mach/motherboard.h>
 
 #include <plat/sched_clock.h>
-#include <plat/platsmp.h>
 
 #include "core.h"
 
@@ -429,12 +425,11 @@ static struct ct_desc *ct_descs[] __initdata = {
 static void __init v2m_populate_ct_desc(void)
 {
 	int i;
-	u32 procid_reg, current_tile_id;
+	u32 current_tile_id;
 
 	ct_desc = NULL;
-	procid_reg = readl(MMIO_P2V(V2M_SYS_MISC)) & SYS_MISC_MASTERSITE ?
-			V2M_SYS_PROCID1 : V2M_SYS_PROCID0;
-	current_tile_id = readl(MMIO_P2V(procid_reg)) & V2M_CT_ID_MASK;
+	current_tile_id = readl(v2m_sysreg_base + V2M_SYS_PROCID0)
+				& V2M_CT_ID_MASK;
 
 	for (i = 0; i < ARRAY_SIZE(ct_descs) && !ct_desc; ++i)
 		if (ct_descs[i]->id == current_tile_id)
@@ -478,15 +473,8 @@ static void __init v2m_init(void)
 	ct_desc->init_tile();
 }
 
-static struct arm_soc_desc vexpress_soc_desc __initdata = {
-	.name		= "ARM VE Platform",
-	soc_smp_init_ops(vexpress_soc_smp_init_ops)
-	soc_smp_ops(vexpress_soc_smp_ops)
-};
-
 MACHINE_START(VEXPRESS, "ARM-Versatile Express")
 	.atag_offset	= 0x100,
-	.soc		= &vexpress_soc_desc,
 	.map_io		= v2m_map_io,
 	.init_early	= v2m_init_early,
 	.init_irq	= v2m_init_irq,
@@ -628,6 +616,7 @@ void __init v2m_dt_init_early(void)
 	}
 
 	clkdev_add_table(v2m_dt_lookups, ARRAY_SIZE(v2m_dt_lookups));
+	versatile_sched_clock_init(v2m_sysreg_base + V2M_SYS_24MHZ, 24000000);
 }
 
 static  struct of_device_id vexpress_irq_match[] __initdata = {
@@ -654,11 +643,6 @@ static void __init v2m_dt_timer_init(void)
 		return;
 	node = of_find_node_by_path(path);
 	v2m_sp804_init(of_iomap(node, 0), irq_of_parse_and_map(node, 0));
-	if (arch_timer_of_register() != 0)
-		twd_local_timer_of_register();
-
-	if (arch_timer_sched_clock_init() != 0)
-		versatile_sched_clock_init(v2m_sysreg_base + V2M_SYS_24MHZ, 24000000);
 }
 
 static struct sys_timer v2m_dt_timer = {

@@ -44,9 +44,19 @@ static __u8 *sony_report_fixup(struct hid_device *hdev, __u8 *rdesc,
 {
 	struct sony_sc *sc = hid_get_drvdata(hdev);
 
-	if ((sc->quirks & VAIO_RDESC_CONSTANT) &&
-			*rsize >= 56 && rdesc[54] == 0x81 && rdesc[55] == 0x07) {
-		hid_info(hdev, "Fixing up Sony Vaio VGX report descriptor\n");
+	/*
+	 * Some Sony RF receivers wrongly declare the mouse pointer as a
+	 * a constant non-data variable.
+	 */
+	if ((sc->quirks & VAIO_RDESC_CONSTANT) && *rsize >= 56 &&
+	    /* usage page: generic desktop controls */
+	    /* rdesc[0] == 0x05 && rdesc[1] == 0x01 && */
+	    /* usage: mouse */
+	    rdesc[2] == 0x09 && rdesc[3] == 0x02 &&
+	    /* input (usage page for x,y axes): constant, variable, relative */
+	    rdesc[54] == 0x81 && rdesc[55] == 0x07) {
+		hid_info(hdev, "Fixing up Sony RF Receiver report descriptor\n");
+		/* input: data, variable, relative */
 		rdesc[55] = 0x06;
 	}
 
@@ -155,26 +165,6 @@ static int sixaxis_set_operational_bt(struct hid_device *hdev)
 	return hdev->hid_output_raw_report(hdev, buf, sizeof(buf), HID_FEATURE_REPORT);
 }
 
-static void sixaxis_set_led_bt(struct hid_device *hdev)
-{
-	hid_info(hdev, "set LED BT\n");
-	/* set first LED on BT connection */
-	unsigned char led_data[] = {
-			0x01,
-			/* rumble values */
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-			/* LED settings 0x02=LED1 .. 0x10=LED4 */
-			0x02,
-			0xff, 0x27, 0x10, 0x00, 0x32,	/* LED 4 */
-			0xff, 0x27, 0x10, 0x00, 0x32,	/* LED 3 */
-			0xff, 0x27, 0x10, 0x00, 0x32,	/* LED 2 */
-			0xff, 0x27, 0x10, 0x00, 0x32,	/* LED 1 */
-			0x00, 0x00, 0x00, 0x00, 0x00
-		};
-	hdev->hid_output_raw_report(hdev, led_data, sizeof(led_data),
-					HID_OUTPUT_REPORT);
-}
-
 static int sony_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
 	int ret;
@@ -207,11 +197,8 @@ static int sony_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		hdev->hid_output_raw_report = sixaxis_usb_output_raw_report;
 		ret = sixaxis_set_operational_usb(hdev);
 	}
-	else if (sc->quirks & SIXAXIS_CONTROLLER_BT) {
+	else if (sc->quirks & SIXAXIS_CONTROLLER_BT)
 		ret = sixaxis_set_operational_bt(hdev);
-		if (ret >= 0)
-			sixaxis_set_led_bt(hdev);
-	}
 	else
 		ret = 0;
 
@@ -240,6 +227,8 @@ static const struct hid_device_id sony_devices[] = {
 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_SONY, USB_DEVICE_ID_SONY_PS3_CONTROLLER),
 		.driver_data = SIXAXIS_CONTROLLER_BT },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_SONY, USB_DEVICE_ID_SONY_VAIO_VGX_MOUSE),
+		.driver_data = VAIO_RDESC_CONSTANT },
+	{ HID_USB_DEVICE(USB_VENDOR_ID_SONY, USB_DEVICE_ID_SONY_VAIO_VGP_MOUSE),
 		.driver_data = VAIO_RDESC_CONSTANT },
 	{ }
 };

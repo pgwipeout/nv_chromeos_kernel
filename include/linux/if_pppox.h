@@ -1,6 +1,6 @@
 /***************************************************************************
  * Linux PPP over X - Generic PPP transport layer sockets
- * Linux PPP over Ethernet (PPPoE) Socket Implementation (RFC 2516)
+ * Linux PPP over Ethernet (PPPoE) Socket Implementation (RFC 2516) 
  *
  * This file supplies definitions required by the PPP over Ethernet driver
  * (pppox.c).  All version information wrt this file is located in pppox.c
@@ -28,8 +28,6 @@
 #include <linux/ppp_channel.h>
 #endif /* __KERNEL__ */
 #include <linux/if_pppol2tp.h>
-#include <linux/if_pppolac.h>
-#include <linux/if_pppopns.h>
 
 /* For user-space programs to pick up these definitions
  * which they wouldn't get otherwise without defining __KERNEL__
@@ -39,17 +37,17 @@
 #define PF_PPPOX	AF_PPPOX
 #endif /* !(AF_PPPOX) */
 
-/************************************************************************
- * PPPoE addressing definition
- */
+/************************************************************************ 
+ * PPPoE addressing definition 
+ */ 
 typedef __be16 sid_t;
 struct pppoe_addr {
 	sid_t         sid;                    /* Session identifier */
 	unsigned char remote[ETH_ALEN];       /* Remote address */
 	char          dev[IFNAMSIZ];          /* Local device to use */
-};
-
-/************************************************************************
+}; 
+ 
+/************************************************************************ 
  * PPTP addressing definition
  */
 struct pptp_addr {
@@ -63,9 +61,7 @@ struct pptp_addr {
 #define PX_PROTO_OE    0 /* Currently just PPPoE */
 #define PX_PROTO_OL2TP 1 /* Now L2TP also */
 #define PX_PROTO_PPTP  2
-#define PX_PROTO_OLAC  3
-#define PX_PROTO_OPNS  4
-#define PX_MAX_PROTO   5
+#define PX_MAX_PROTO   3
 
 struct sockaddr_pppox {
 	__kernel_sa_family_t sa_family;       /* address family, AF_PPPOX */
@@ -132,11 +128,11 @@ struct pppoe_tag {
 
 struct pppoe_hdr {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
-	__u8 ver : 4;
 	__u8 type : 4;
+	__u8 ver : 4;
 #elif defined(__BIG_ENDIAN_BITFIELD)
-	__u8 type : 4;
 	__u8 ver : 4;
+	__u8 type : 4;
 #else
 #error	"Please fix <asm/byteorder.h>"
 #endif
@@ -172,25 +168,6 @@ struct pptp_opt {
 	u32 seq_sent, seq_recv;
 	int ppp_flags;
 };
-
-struct pppolac_opt {
-	__u32		local;
-	__u32		remote;
-	__u32		recv_sequence;
-	__u32		xmit_sequence;
-	atomic_t	sequencing;
-	int		(*backlog_rcv)(struct sock *sk_udp, struct sk_buff *skb);
-};
-
-struct pppopns_opt {
-	__u16		local;
-	__u16		remote;
-	__u32		recv_sequence;
-	__u32		xmit_sequence;
-	void		(*data_ready)(struct sock *sk_raw, int length);
-	int		(*backlog_rcv)(struct sock *sk_raw, struct sk_buff *skb);
-};
-
 #include <net/sock.h>
 
 struct pppox_sock {
@@ -201,8 +178,6 @@ struct pppox_sock {
 	union {
 		struct pppoe_opt pppoe;
 		struct pptp_opt  pptp;
-		struct pppolac_opt lac;
-		struct pppopns_opt pns;
 	} proto;
 	__be16			num;
 };

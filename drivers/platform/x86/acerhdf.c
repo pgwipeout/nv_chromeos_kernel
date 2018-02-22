@@ -329,8 +329,7 @@ static int acerhdf_bind(struct thermal_zone_device *thermal,
 	if (cdev != cl_dev)
 		return 0;
 
-	if (thermal_zone_bind_cooling_device(thermal, 0, cdev,
-			THERMAL_NO_LIMIT, THERMAL_NO_LIMIT)) {
+	if (thermal_zone_bind_cooling_device(thermal, 0, cdev)) {
 		pr_err("error binding cooling dev\n");
 		return -EINVAL;
 	}
@@ -661,8 +660,8 @@ static int acerhdf_register_thermal(void)
 	if (IS_ERR(cl_dev))
 		return -EINVAL;
 
-	thz_dev = thermal_zone_device_register("acerhdf", 1, 0, NULL,
-					      &acerhdf_dev_ops, NULL, 0,
+	thz_dev = thermal_zone_device_register("acerhdf", 1, NULL,
+					      &acerhdf_dev_ops, 0, 0, 0,
 					      (kernelmode) ? interval*1000 : 0);
 	if (IS_ERR(thz_dev))
 		return -EINVAL;

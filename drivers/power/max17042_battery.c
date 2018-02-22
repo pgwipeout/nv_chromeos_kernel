@@ -5,8 +5,6 @@
  * Copyright (C) 2011 Samsung Electronics
  * MyungJoo Ham <myungjoo.ham@samsung.com>
  *
- * Copyright (c) 2012-2013, NVIDIA CORPORATION.  All rights reserved.
- *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -30,10 +28,6 @@
 #include <linux/i2c.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
-#include <linux/pm.h>
-#include <linux/jiffies.h>
-#include <linux/math64.h>
-#include <linux/edp.h>
 #include <linux/mod_devicetable.h>
 #include <linux/power_supply.h>
 #include <linux/power/max17042_battery.h>
@@ -67,46 +61,17 @@
 #define dP_ACC_100	0x1900
 #define dP_ACC_200	0x3200
 
-#define MAX17042_IC_VERSION	0x0092
-#define MAX17047_IC_VERSION	0x00AC	/* same for max17050 */
-#define MAX17047_DELAY		1000
-
-/* Battery depletion constants */
-#define DEPL_INTERVAL	300000
-#define VSYS_MIN	3100000
-#define AVG_CURRENT_MIN	100000
-#define R_CONTACTS	20000
-#define R_BOARD		30000
-#define R_PASSFET	30000
-#define RBAT_INIT	150000
-
 struct max17042_chip {
 	struct i2c_client *client;
 	struct power_supply battery;
-	enum max170xx_chip_type chip_type;
 	struct max17042_platform_data *pdata;
-	struct delayed_work work;
+	struct work_struct work;
 	int    init_complete;
-	unsigned int rbat_lastgood;
-	unsigned int edp_req;
-	struct delayed_work depl_work;
-	int shutdown_complete;
-	int status;
-	int cap;
-	int chgin_ilim;
 };
-struct max17042_chip *tmp_chip;
-struct i2c_client *temp_client;
 
 static int max17042_write_reg(struct i2c_client *client, u8 reg, u16 value)
 {
-	int ret = 0;
-	struct max17042_chip *chip = i2c_get_clientdata(client);
-
-	if (chip && chip->shutdown_complete)
-		return -ENODEV;
-
-	ret = i2c_smbus_write_word_data(client, reg, value);
+	int ret = i2c_smbus_write_word_data(client, reg, value);
 
 	if (ret < 0)
 		dev_err(&client->dev, "%s: err %d\n", __func__, ret);
@@ -116,13 +81,7 @@ static int max17042_write_reg(struct i2c_client *client, u8 reg, u16 value)
 
 static int max17042_read_reg(struct i2c_client *client, u8 reg)
 {
-	int ret = 0;
-	struct max17042_chip *chip = i2c_get_clientdata(client);
-
-	if (chip && chip->shutdown_complete)
-		return -ENODEV;
-
-	ret = i2c_smbus_read_word_data(client, reg);
+	int ret = i2c_smbus_read_word_data(client, reg);
 
 	if (ret < 0)
 		dev_err(&client->dev, "%s: err %d\n", __func__, ret);
@@ -146,54 +105,12 @@ static enum power_supply_property max17042_battery_props[] = {
 	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_VOLTAGE_AVG,
-	POWER_SUPPLY_PROP_VOLTAGE_OCV,
 	POWER_SUPPLY_PROP_CAPACITY,
 	POWER_SUPPLY_PROP_CHARGE_FULL,
-	POWER_SUPPLY_PROP_CHARGE_COUNTER,
 	POWER_SUPPLY_PROP_TEMP,
 	POWER_SUPPLY_PROP_CURRENT_NOW,
 	POWER_SUPPLY_PROP_CURRENT_AVG,
-	POWER_SUPPLY_PROP_STATUS,
 };
-
-int maxim_get_temp()
-{
-	int ret = 0xff;
-	if (temp_client != NULL) {
-		ret = max17042_read_reg(temp_client, MAX17042_TEMP);
-		if (ret < 0)
-			return ret;
-
-		/* The value is signed. */
-		if (ret & 0x8000) {
-			ret = (0x7fff & ~ret) + 1;
-			ret *= -1;
-		}
-		/* The value is converted into deci-centigrade scale */
-		/* Units of LSB = 1 / 256 degree Celsius */
-		ret = ret * 10 / 256;
-	}
-	return ret;
-}
-EXPORT_SYMBOL_GPL(maxim_get_temp);
-
-void max17042_update_status(int status)
-{
-	if (!tmp_chip) {
-		WARN_ON(1);
-		return;
-	}
-
-	tmp_chip->status = status;
-	power_supply_changed(&tmp_chip->battery);
-	if (IS_ENABLED(CONFIG_EDP_FRAMEWORK) &&
-			tmp_chip->chgin_ilim != status) {
-		tmp_chip->chgin_ilim = status;
-		schedule_delayed_work(&tmp_chip->depl_work, 0);
-		flush_delayed_work_sync(&tmp_chip->depl_work);
-	}
-}
-EXPORT_SYMBOL_GPL(max17042_update_status);
 
 static int max17042_get_property(struct power_supply *psy,
 			    enum power_supply_property psp,
@@ -233,10 +150,7 @@ static int max17042_get_property(struct power_supply *psy,
 		val->intval *= 20000; /* Units of LSB = 20mV */
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
-		if (chip->chip_type == MAX17042)
-			ret = max17042_read_reg(chip->client, MAX17042_V_empty);
-		else
-			ret = max17042_read_reg(chip->client, MAX17047_V_empty);
+		ret = max17042_read_reg(chip->client, MAX17042_V_empty);
 		if (ret < 0)
 			return ret;
 
@@ -257,30 +171,15 @@ static int max17042_get_property(struct power_supply *psy,
 
 		val->intval = ret * 625 / 8;
 		break;
-	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
-		ret = max17042_read_reg(chip->client, MAX17042_OCVInternal);
-		if (ret < 0)
-			return ret;
-
-		val->intval = ret * 625 / 8;
-		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
 		ret = max17042_read_reg(chip->client, MAX17042_RepSOC);
 		if (ret < 0)
 			return ret;
 
 		val->intval = ret >> 8;
-		chip->cap = val->intval;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL:
 		ret = max17042_read_reg(chip->client, MAX17042_FullCAP);
-		if (ret < 0)
-			return ret;
-
-		val->intval = ret * 1000 / 2;
-		break;
-	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
-		ret = max17042_read_reg(chip->client, MAX17042_QH);
 		if (ret < 0)
 			return ret;
 
@@ -338,15 +237,6 @@ static int max17042_get_property(struct power_supply *psy,
 			return -EINVAL;
 		}
 		break;
-
-	case POWER_SUPPLY_PROP_STATUS:
-		if (chip->status)
-			val->intval = POWER_SUPPLY_STATUS_CHARGING;
-		else
-			val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
-		if (chip->cap >= 100)
-			val->intval = POWER_SUPPLY_STATUS_FULL;
-		break;
 	default:
 		return -EINVAL;
 	}
@@ -361,7 +251,7 @@ static int max17042_write_verify_reg(struct i2c_client *client,
 	u16 read_value;
 
 	do {
-		ret = max17042_write_reg(client, reg, value);
+		ret = i2c_smbus_write_word_data(client, reg, value);
 		read_value =  max17042_read_reg(client, reg);
 		if (read_value != value) {
 			ret = -EIO;
@@ -435,10 +325,11 @@ static inline int max17042_model_data_compare(struct max17042_chip *chip,
 static int max17042_init_model(struct max17042_chip *chip)
 {
 	int ret;
-	int table_size = ARRAY_SIZE(chip->pdata->config_data->cell_char_tbl);
+	int table_size =
+		sizeof(chip->pdata->config_data->cell_char_tbl)/sizeof(u16);
 	u16 *temp_data;
 
-	temp_data = kcalloc(table_size, sizeof(*temp_data), GFP_KERNEL);
+	temp_data = kzalloc(table_size, GFP_KERNEL);
 	if (!temp_data)
 		return -ENOMEM;
 
@@ -463,11 +354,12 @@ static int max17042_init_model(struct max17042_chip *chip)
 static int max17042_verify_model_lock(struct max17042_chip *chip)
 {
 	int i;
-	int table_size = ARRAY_SIZE(chip->pdata->config_data->cell_char_tbl);
+	int table_size =
+		sizeof(chip->pdata->config_data->cell_char_tbl);
 	u16 *temp_data;
 	int ret = 0;
 
-	temp_data = kcalloc(table_size, sizeof(*temp_data), GFP_KERNEL);
+	temp_data = kzalloc(table_size, GFP_KERNEL);
 	if (!temp_data)
 		return -ENOMEM;
 
@@ -490,9 +382,6 @@ static void max17042_write_config_regs(struct max17042_chip *chip)
 	max17042_write_reg(chip->client, MAX17042_FilterCFG,
 			config->filter_cfg);
 	max17042_write_reg(chip->client, MAX17042_RelaxCFG, config->relax_cfg);
-	if (chip->chip_type == MAX17047)
-		max17042_write_reg(chip->client, MAX17047_FullSOCThr,
-						config->full_soc_thresh);
 }
 
 static void  max17042_write_custom_regs(struct max17042_chip *chip)
@@ -503,23 +392,12 @@ static void  max17042_write_custom_regs(struct max17042_chip *chip)
 				config->rcomp0);
 	max17042_write_verify_reg(chip->client, MAX17042_TempCo,
 				config->tcompc0);
+	max17042_write_reg(chip->client, MAX17042_EmptyTempCo,
+			config->empty_tempco);
+	max17042_write_verify_reg(chip->client, MAX17042_K_empty0,
+				config->kempty0);
 	max17042_write_verify_reg(chip->client, MAX17042_ICHGTerm,
 				config->ichgt_term);
-	if (chip->chip_type == MAX17042) {
-		max17042_write_reg(chip->client, MAX17042_EmptyTempCo,
-					config->empty_tempco);
-		max17042_write_verify_reg(chip->client, MAX17042_K_empty0,
-					config->kempty0);
-	} else {
-		max17042_write_verify_reg(chip->client, MAX17047_QRTbl00,
-						config->qrtbl00);
-		max17042_write_verify_reg(chip->client, MAX17047_QRTbl10,
-						config->qrtbl10);
-		max17042_write_verify_reg(chip->client, MAX17047_QRTbl20,
-						config->qrtbl20);
-		max17042_write_verify_reg(chip->client, MAX17047_QRTbl30,
-						config->qrtbl30);
-	}
 }
 
 static void max17042_update_capacity_regs(struct max17042_chip *chip)
@@ -575,8 +453,6 @@ static void max17042_load_new_capacity_params(struct max17042_chip *chip)
 			config->design_cap);
 	max17042_write_verify_reg(chip->client, MAX17042_FullCAPNom,
 			config->fullcapnom);
-	/* Update SOC register with new SOC */
-	max17042_write_reg(chip->client, MAX17042_RepSOC, vfSoc);
 }
 
 /*
@@ -613,28 +489,20 @@ static inline void max17042_override_por_values(struct max17042_chip *chip)
 
 	max17042_override_por(client, MAX17042_FullCAP, config->fullcap);
 	max17042_override_por(client, MAX17042_FullCAPNom, config->fullcapnom);
-	if (chip->chip_type == MAX17042)
-		max17042_override_por(client, MAX17042_SOC_empty,
-						config->socempty);
+	max17042_override_por(client, MAX17042_SOC_empty, config->socempty);
 	max17042_override_por(client, MAX17042_LAvg_empty, config->lavg_empty);
 	max17042_override_por(client, MAX17042_dQacc, config->dqacc);
 	max17042_override_por(client, MAX17042_dPacc, config->dpacc);
 
-	if (chip->chip_type == MAX17042)
-		max17042_override_por(client, MAX17042_V_empty, config->vempty);
-	else
-		max17042_override_por(client, MAX17047_V_empty, config->vempty);
+	max17042_override_por(client, MAX17042_V_empty, config->vempty);
 	max17042_override_por(client, MAX17042_TempNom, config->temp_nom);
 	max17042_override_por(client, MAX17042_TempLim, config->temp_lim);
 	max17042_override_por(client, MAX17042_FCTC, config->fctc);
 	max17042_override_por(client, MAX17042_RCOMP0, config->rcomp0);
 	max17042_override_por(client, MAX17042_TempCo, config->tcompc0);
-	if (chip->chip_type) {
-		max17042_override_por(client, MAX17042_EmptyTempCo,
-					config->empty_tempco);
-		max17042_override_por(client, MAX17042_K_empty0,
-					config->kempty0);
-	}
+	max17042_override_por(client, MAX17042_EmptyTempCo,
+			config->empty_tempco);
+	max17042_override_por(client, MAX17042_K_empty0, config->kempty0);
 }
 
 static int max17042_init_chip(struct max17042_chip *chip)
@@ -685,7 +553,6 @@ static int max17042_init_chip(struct max17042_chip *chip)
 	val = max17042_read_reg(chip->client, MAX17042_STATUS);
 	max17042_write_reg(chip->client, MAX17042_STATUS,
 			val & (~STATUS_POR_BIT));
-	chip->init_complete = 1;
 	return 0;
 }
 
@@ -718,176 +585,20 @@ static irqreturn_t max17042_thread_handler(int id, void *dev)
 	return IRQ_HANDLED;
 }
 
-#ifdef CONFIG_EDP_FRAMEWORK
-struct temp_ibat_map {
-	unsigned int temp;
-	unsigned int ibat;
-};
-
-struct temp_ibat_map safe_ibat_lut[] = {
-	{  0, 5000 },
-	{ 25, 3700 },
-	{ 60, 1900 },
-	{ 70, 1600 }
-};
-
-unsigned int ibat_safepeak(int temp)
-{
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(safe_ibat_lut) - 1; i++)
-		if (temp <= safe_ibat_lut[i].temp)
-			break;
-
-	return safe_ibat_lut[i].ibat;
-}
-
-static unsigned int max17042_depletion(struct max17042_chip *chip)
-{
-	s64 avgcurrent;
-	s64 avgvcell;
-	s64 ocv;
-	s64 rbat_calc;
-	s64 temp;
-	unsigned int ibat;
-	unsigned int depl;
-	unsigned int deplmax;
-	unsigned int safe;
-	struct power_supply *psy;
-	union power_supply_propval pv;
-
-	deplmax = chip->pdata->edp_client->states[0];
-	psy = &chip->battery;
-
-	if (max17042_get_property(psy, POWER_SUPPLY_PROP_CURRENT_AVG, &pv))
-		goto err_ret;
-	avgcurrent = pv.intval;
-
-	if (max17042_get_property(psy, POWER_SUPPLY_PROP_VOLTAGE_AVG, &pv))
-		goto err_ret;
-	avgvcell = pv.intval;
-
-	if (max17042_get_property(psy, POWER_SUPPLY_PROP_VOLTAGE_OCV, &pv))
-		goto err_ret;
-	ocv = pv.intval;
-
-	if (max17042_get_property(psy, POWER_SUPPLY_PROP_TEMP, &pv))
-		goto err_ret;
-	temp = pv.intval;
-
-	if (avgcurrent <= -AVG_CURRENT_MIN) {
-		rbat_calc = div64_s64(1000000 * (ocv - avgvcell), -avgcurrent);
-		chip->rbat_lastgood = rbat_calc;
-	} else {
-		rbat_calc = chip->rbat_lastgood;
-	}
-
-	ibat = (unsigned int)div64_s64(1000 * (ocv - VSYS_MIN),
-			rbat_calc + R_CONTACTS + R_BOARD + R_PASSFET);
-	ibat += chip->chgin_ilim;
-
-	safe = ibat_safepeak(temp);
-	depl = safe - min(safe, ibat);
-	return min(depl, deplmax);
-
-err_ret:
-	WARN_ON(1);
-	return deplmax;
-}
-
-static void max17042_update_depletion(struct work_struct *work)
-{
-	struct max17042_chip *chip;
-	struct edp_client *c;
-	unsigned int depl;
-	unsigned int i;
-	int r;
-
-	chip = container_of(work, struct max17042_chip, depl_work.work);
-	c = chip->pdata->edp_client;
-	depl = max17042_depletion(chip);
-	i = c->num_states - 1;
-
-	while (i && c->states[i] < depl)
-		i--;
-
-	if (chip->edp_req != i) {
-		r = edp_update_client_request(c, i, NULL);
-		WARN_ON(r);
-		chip->edp_req = i;
-	}
-
-	schedule_delayed_work(to_delayed_work(work),
-			msecs_to_jiffies(DEPL_INTERVAL));
-}
-
-static int max17042_init_depletion(struct max17042_chip *chip)
-{
-	struct edp_manager *m;
-	struct edp_client *c;
-	int r;
-
-	m = edp_get_manager("battery");
-	if (!m) {
-		dev_err(&chip->client->dev,
-				"could not get the battery EDP manager\n");
-		return -ENODEV;
-	}
-
-	c = chip->pdata->edp_client;
-	chip->rbat_lastgood = RBAT_INIT;
-	chip->edp_req = c->num_states;
-	chip->chgin_ilim = 0;
-
-	strncpy(c->name, chip->battery.name, EDP_NAME_LEN - 1);
-	c->name[EDP_NAME_LEN - 1] = 0;
-
-	r = edp_register_client(m, c);
-	if (r) {
-		dev_err(&chip->client->dev,
-				"failed to register depletion client (%d)\n",
-				r);
-		return r;
-	}
-
-	INIT_DELAYED_WORK_DEFERRABLE(&chip->depl_work,
-			max17042_update_depletion);
-	schedule_delayed_work(&chip->depl_work, 0);
-	return 0;
-}
-
-static void max17042_suspend_depletion_mon(struct max17042_chip *chip)
-{
-	cancel_delayed_work_sync(&chip->depl_work);
-}
-
-static void max17042_resume_depletion_mon(struct max17042_chip *chip)
-{
-	schedule_delayed_work(&chip->depl_work, 0);
-}
-
-#else
-
-static inline int max17042_init_depletion(struct max17042_chip *chip)
-{
-	return 0;
-}
-
-static inline void max17042_suspend_depletion_mon(struct max17042_chip *chip)
-{
-}
-
-static inline void max17042_resume_depletion_mon(struct max17042_chip *chip)
-{
-}
-#endif
-
 static void max17042_init_worker(struct work_struct *work)
 {
 	struct max17042_chip *chip = container_of(work,
-				struct max17042_chip, work.work);
-	power_supply_changed(&chip->battery);
-	schedule_delayed_work(&chip->work, MAX17047_DELAY);
+				struct max17042_chip, work);
+	int ret;
+
+	/* Initialize registers according to values from the platform data */
+	if (chip->pdata->enable_por_init && chip->pdata->config_data) {
+		ret = max17042_init_chip(chip);
+		if (ret)
+			return;
+	}
+
+	chip->init_complete = 1;
 }
 
 #ifdef CONFIG_OF
@@ -940,28 +651,15 @@ static int __devinit max17042_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	chip->client = client;
-	temp_client = client;
 	chip->pdata = max17042_get_pdata(&client->dev);
 	if (!chip->pdata) {
 		dev_err(&client->dev, "no platform data provided\n");
 		return -EINVAL;
 	}
-	tmp_chip = chip;
+
 	i2c_set_clientdata(client, chip);
 
-	ret = max17042_read_reg(chip->client, MAX17042_DevName);
-	if (ret == MAX17042_IC_VERSION) {
-		dev_dbg(&client->dev, "chip type max17042 detected\n");
-		chip->chip_type = MAX17042;
-	} else if (ret == MAX17047_IC_VERSION) {
-		dev_dbg(&client->dev, "chip type max17047/50 detected\n");
-		chip->chip_type = MAX17047;
-	} else {
-		dev_err(&client->dev, "device version mismatch: %x\n", ret);
-		return -EIO;
-	}
-
-	chip->battery.name		= "max170xx_battery";
+	chip->battery.name		= "max17042_battery";
 	chip->battery.type		= POWER_SUPPLY_TYPE_BATTERY;
 	chip->battery.get_property	= max17042_get_property;
 	chip->battery.properties	= max17042_battery_props;
@@ -995,124 +693,37 @@ static int __devinit max17042_probe(struct i2c_client *client,
 			reg |= CONFIG_ALRT_BIT_ENBL;
 			max17042_write_reg(client, MAX17042_CONFIG, reg);
 			max17042_set_soc_threshold(chip, 1);
-		} else {
-			client->irq = 0;
+		} else
 			dev_err(&client->dev, "%s(): cannot get IRQ\n",
 				__func__);
-		}
 	}
 
 	reg = max17042_read_reg(chip->client, MAX17042_STATUS);
+
 	if (reg & STATUS_POR_BIT) {
-		if (chip->pdata->enable_por_init && chip->pdata->config_data) {
-			ret = max17042_init_chip(chip);
-			if (ret)
-				return ret;
-		}
+		INIT_WORK(&chip->work, max17042_init_worker);
+		schedule_work(&chip->work);
 	} else {
 		chip->init_complete = 1;
 	}
 
-	/* Check for battery presence */
-	ret = maxim_get_temp();
-	if (ret == 0xff) {
-		dev_err(&client->dev, "failed in reading temperaure\n");
-		return -ENODEV;
-	} else if ((ret < MIN_TEMP) || (ret > MAX_TEMP)) {
-		dev_err(&client->dev, "Battery not detected exiting driver\n");
-		return -ENODEV;
-	}
-
 	ret = power_supply_register(&client->dev, &chip->battery);
-	if (ret) {
+	if (ret)
 		dev_err(&client->dev, "failed: power supply register\n");
-		return ret;
-	}
-
-	ret = max17042_init_depletion(chip);
-	if (ret) {
-		dev_err(&client->dev, "failed to init depletion EDP client\n");
-		return ret;
-	}
-
-	INIT_DELAYED_WORK_DEFERRABLE(&chip->work, max17042_init_worker);
-	schedule_delayed_work(&chip->work, 0);
-
-	return 0;
+	return ret;
 }
 
 static int __devexit max17042_remove(struct i2c_client *client)
 {
 	struct max17042_chip *chip = i2c_get_clientdata(client);
 
-	if (client->irq)
-		free_irq(client->irq, chip);
 	power_supply_unregister(&chip->battery);
 	return 0;
 }
 
-static void max17042_shutdown(struct i2c_client *client)
-{
-	struct max17042_chip *chip = i2c_get_clientdata(client);
-
-	if (client->irq)
-		disable_irq(client->irq);
-
-	cancel_delayed_work_sync(&chip->work);
-
-	chip->shutdown_complete = 1;
-}
-
-#ifdef CONFIG_PM
-static int max17042_suspend(struct device *dev)
-{
-	struct max17042_chip *chip = dev_get_drvdata(dev);
-
-	max17042_suspend_depletion_mon(chip);
-
-	/*
-	 * disable the irq and enable irq_wake
-	 * capability to the interrupt line.
-	 */
-	if (chip->client->irq) {
-		disable_irq(chip->client->irq);
-		enable_irq_wake(chip->client->irq);
-	}
-
-	return 0;
-}
-
-static int max17042_resume(struct device *dev)
-{
-	struct max17042_chip *chip = dev_get_drvdata(dev);
-
-	max17042_resume_depletion_mon(chip);
-
-	if (chip->client->irq) {
-		disable_irq_wake(chip->client->irq);
-		enable_irq(chip->client->irq);
-		/* re-program the SOC thresholds to 1% change */
-		max17042_set_soc_threshold(chip, 1);
-	}
-
-	return 0;
-}
-
-static const struct dev_pm_ops max17042_pm_ops = {
-	.suspend	= max17042_suspend,
-	.resume		= max17042_resume,
-};
-
-#define MAX17042_PM_OPS (&max17042_pm_ops)
-#else
-#define MAX17042_PM_OPS NULL
-#endif
-
 #ifdef CONFIG_OF
 static const struct of_device_id max17042_dt_match[] = {
 	{ .compatible = "maxim,max17042" },
-	{ .compatible = "maxim,max17047" },
-	{ .compatible = "maxim,max17050" },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, max17042_dt_match);
@@ -1120,8 +731,6 @@ MODULE_DEVICE_TABLE(of, max17042_dt_match);
 
 static const struct i2c_device_id max17042_id[] = {
 	{ "max17042", 0 },
-	{ "max17047", 1 },
-	{ "max17050", 2 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, max17042_id);
@@ -1130,12 +739,10 @@ static struct i2c_driver max17042_i2c_driver = {
 	.driver	= {
 		.name	= "max17042",
 		.of_match_table = of_match_ptr(max17042_dt_match),
-		.pm	= MAX17042_PM_OPS,
 	},
 	.probe		= max17042_probe,
 	.remove		= __devexit_p(max17042_remove),
 	.id_table	= max17042_id,
-	.shutdown	= max17042_shutdown,
 };
 module_i2c_driver(max17042_i2c_driver);
 
